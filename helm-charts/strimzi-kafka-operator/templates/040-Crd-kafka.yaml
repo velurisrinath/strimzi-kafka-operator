@@ -131,6 +131,7 @@ spec:
                               enum:
                               - tls
                               - scram-sha-512
+                              - kubernetes-sa
                           required:
                           - type
                         networkPolicyPeers:
@@ -194,6 +195,7 @@ spec:
                               enum:
                               - tls
                               - scram-sha-512
+                              - kubernetes-sa
                           required:
                           - type
                         networkPolicyPeers:
@@ -257,6 +259,7 @@ spec:
                               enum:
                               - tls
                               - scram-sha-512
+                              - kubernetes-sa
                           required:
                           - type
                         configuration:
@@ -385,6 +388,7 @@ spec:
                       type: string
                       enum:
                       - simple
+                      - kubernetes-rbac
                   required:
                   - type
                 config:

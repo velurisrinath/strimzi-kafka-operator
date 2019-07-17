@@ -16,4 +16,18 @@ rules:
   - nodes
   verbs:
   - get
+# TokenReview access right is needed to validate the Service Account tokens for the Kafka Kubernetes authenticator
+- apiGroups:
+    - authentication.k8s.io
+  resources:
+    - tokenreviews
+  verbs:
+    - create
+# SubjectAccessReviews access right is needed for the Kafka Kubernetes authorizer
+- apiGroups:
+    - authorization.k8s.io
+  resources:
+    - subjectaccessreviews
+  verbs:
+    - create
 {{- end -}}

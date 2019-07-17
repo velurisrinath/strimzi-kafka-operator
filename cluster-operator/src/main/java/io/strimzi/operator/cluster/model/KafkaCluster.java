@@ -52,6 +52,7 @@ import io.fabric8.openshift.api.model.RouteBuilder;
 import io.strimzi.api.kafka.model.InlineLogging;
 import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.KafkaAuthorization;
+import io.strimzi.api.kafka.model.KafkaAuthorizationKubernetesRbac;
 import io.strimzi.api.kafka.model.KafkaAuthorizationSimple;
 import io.strimzi.api.kafka.model.KafkaClusterSpec;
 import io.strimzi.api.kafka.model.KafkaResources;
@@ -64,6 +65,7 @@ import io.strimzi.api.kafka.model.listener.ExternalListenerBootstrapOverride;
 import io.strimzi.api.kafka.model.listener.ExternalListenerBrokerOverride;
 import io.strimzi.api.kafka.model.listener.IngressListenerBrokerConfiguration;
 import io.strimzi.api.kafka.model.listener.IngressListenerConfiguration;
+import io.strimzi.api.kafka.model.listener.KafkaListenerAuthenticationKubernetesServiceAccounts;
 import io.strimzi.api.kafka.model.listener.KafkaListenerAuthenticationTls;
 import io.strimzi.api.kafka.model.listener.KafkaListenerExternalIngress;
 import io.strimzi.api.kafka.model.listener.KafkaListenerExternalLoadBalancer;
@@ -1281,13 +1283,23 @@ public class KafkaCluster extends AbstractModel {
             }
         }
 
-        if (authorization != null && KafkaAuthorizationSimple.TYPE_SIMPLE.equals(authorization.getType()))  {
-            varList.add(buildEnvVar(ENV_VAR_KAFKA_AUTHORIZATION_TYPE, KafkaAuthorizationSimple.TYPE_SIMPLE));
+        if (authorization != null) {
+            if (KafkaAuthorizationSimple.TYPE_SIMPLE.equals(authorization.getType())) {
+                varList.add(buildEnvVar(ENV_VAR_KAFKA_AUTHORIZATION_TYPE, KafkaAuthorizationSimple.TYPE_SIMPLE));
 
-            KafkaAuthorizationSimple simpleAuthz = (KafkaAuthorizationSimple) authorization;
-            if (simpleAuthz.getSuperUsers() != null && simpleAuthz.getSuperUsers().size() > 0)  {
-                String superUsers = simpleAuthz.getSuperUsers().stream().map(e -> String.format("User:%s", e)).collect(Collectors.joining(";"));
-                varList.add(buildEnvVar(ENV_VAR_KAFKA_AUTHORIZATION_SUPER_USERS, superUsers));
+                KafkaAuthorizationSimple simpleAuthz = (KafkaAuthorizationSimple) authorization;
+                if (simpleAuthz.getSuperUsers() != null && simpleAuthz.getSuperUsers().size() > 0) {
+                    String superUsers = simpleAuthz.getSuperUsers().stream().map(e -> String.format("User:%s", e)).collect(Collectors.joining(";"));
+                    varList.add(buildEnvVar(ENV_VAR_KAFKA_AUTHORIZATION_SUPER_USERS, superUsers));
+                }
+            } else if (KafkaAuthorizationKubernetesRbac.TYPE_KUBERNETES_RBAC.equals(authorization.getType())) {
+                varList.add(buildEnvVar(ENV_VAR_KAFKA_AUTHORIZATION_TYPE, KafkaAuthorizationKubernetesRbac.TYPE_KUBERNETES_RBAC));
+
+                KafkaAuthorizationKubernetesRbac rbacAuthz = (KafkaAuthorizationKubernetesRbac) authorization;
+                if (rbacAuthz.getSuperUsers() != null && rbacAuthz.getSuperUsers().size() > 0) {
+                    String superUsers = rbacAuthz.getSuperUsers().stream().map(e -> String.format("User:%s", e)).collect(Collectors.joining(";"));
+                    varList.add(buildEnvVar(ENV_VAR_KAFKA_AUTHORIZATION_SUPER_USERS, superUsers));
+                }
             }
         }
 
@@ -1345,7 +1357,9 @@ public class KafkaCluster extends AbstractModel {
      * @return The cluster role binding.
      */
     public ClusterRoleBinding generateClusterRoleBinding(String assemblyNamespace) {
-        if (rack != null || isExposedWithNodePort()) {
+        if (rack != null
+                || isExposedWithNodePort()
+                || usesKubernetesServiceAccountsAuthentication()) {
             Subject ks = new SubjectBuilder()
                     .withKind("ServiceAccount")
                     .withName(initContainerServiceAccountName(cluster))
@@ -1734,5 +1748,28 @@ public class KafkaCluster extends AbstractModel {
     @Override
     public KafkaConfiguration getConfiguration() {
         return (KafkaConfiguration) configuration;
+    }
+
+    /**
+     * Finds out if any listener uses Kubernetes type authentication (Service Account tokens)
+     *
+     * @return True if any listeners uses "kubernetes" type authentication.
+     */
+    public boolean usesKubernetesServiceAccountsAuthentication() {
+        if (listeners != null)  {
+            if (listeners.getPlain() != null && listeners.getPlain().getAuthentication() != null && KafkaListenerAuthenticationKubernetesServiceAccounts.KUBERNETES_SA.equals(listeners.getPlain().getAuthentication().getType())) {
+                return true;
+            }
+
+            if (listeners.getTls() != null && listeners.getTls().getAuth() != null && KafkaListenerAuthenticationKubernetesServiceAccounts.KUBERNETES_SA.equals(listeners.getTls().getAuth().getType())) {
+                return true;
+            }
+
+            if (listeners.getExternal() != null && listeners.getExternal().getAuth() != null && KafkaListenerAuthenticationKubernetesServiceAccounts.KUBERNETES_SA.equals(listeners.getExternal().getAuth().getType())) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

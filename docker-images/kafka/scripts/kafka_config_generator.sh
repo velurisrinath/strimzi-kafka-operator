@@ -30,6 +30,15 @@ if [ "$KAFKA_CLIENT_ENABLED" = "TRUE" ]; then
 listener.name.client.scram-sha-512.sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required;
 EOF
 )
+  elif [ "$KAFKA_CLIENT_AUTHENTICATION" = "kubernetes-sa" ]; then
+    SASL_ENABLED_MECHANISMS="OAUTHBEARER\n$SASL_ENABLED_MECHANISMS"
+    LISTENER_SECURITY_PROTOCOL_MAP="${LISTENER_SECURITY_PROTOCOL_MAP},CLIENT:SASL_PLAINTEXT"
+    CLIENT_LISTENER=$(cat <<EOF
+# CLIENT listener authentication
+listener.name.client.oauthbearer.sasl.server.callback.handler.class=io.strimzi.kafka.kubernetes.authenticator.KubernetesTokenValidatorCallbackHandler
+listener.name.client.oauthbearer.sasl.jaas.config=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required;
+EOF
+)
   else
     LISTENER_SECURITY_PROTOCOL_MAP="${LISTENER_SECURITY_PROTOCOL_MAP},CLIENT:PLAINTEXT"
   fi
@@ -65,6 +74,16 @@ EOF
 $CLIENTTLS_LISTENER
 # CLIENTTLS listener authentication
 listener.name.clienttls.scram-sha-512.sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required;
+EOF
+)
+  elif [ "$KAFKA_CLIENTTLS_AUTHENTICATION" = "kubernetes-sa" ]; then
+    SASL_ENABLED_MECHANISMS="OAUTHBEARER\n$SASL_ENABLED_MECHANISMS"
+    LISTENER_SECURITY_PROTOCOL_MAP="${LISTENER_SECURITY_PROTOCOL_MAP},CLIENTTLS:SASL_SSL"
+    CLIENTTLS_LISTENER=$(cat <<EOF
+$CLIENTTLS_LISTENER
+# CLIENTTLS listener authentication
+listener.name.clienttls.oauthbearer.sasl.server.callback.handler.class=io.strimzi.kafka.kubernetes.authenticator.KubernetesTokenValidatorCallbackHandler
+listener.name.clienttls.oauthbearer.sasl.jaas.config=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required;
 EOF
 )
   else
@@ -136,6 +155,22 @@ $EXTERNAL_LISTENER
 listener.name.external.scram-sha-512.sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required;
 EOF
 )
+  elif [ "$KAFKA_EXTERNAL_AUTHENTICATION" = "kubernetes-sa" ]; then
+    SASL_ENABLED_MECHANISMS="OAUTHBEARER\n$SASL_ENABLED_MECHANISMS"
+
+    if [ "$KAFKA_EXTERNAL_TLS" = "true" ]; then
+      LISTENER_SECURITY_PROTOCOL_MAP="${LISTENER_SECURITY_PROTOCOL_MAP},EXTERNAL:SASL_SSL"
+    else
+      LISTENER_SECURITY_PROTOCOL_MAP="${LISTENER_SECURITY_PROTOCOL_MAP},EXTERNAL:SASL_PLAINTEXT"
+    fi
+
+    EXTERNAL_LISTENER=$(cat <<EOF
+$EXTERNAL_LISTENER
+# EXTERNAL listener authentication
+listener.name.external.oauthbearer.sasl.server.callback.handler.class=io.strimzi.kafka.kubernetes.authenticator.KubernetesTokenValidatorCallbackHandler
+listener.name.external.oauthbearer.sasl.jaas.config=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required;
+EOF
+)
   else
     if [ "$KAFKA_EXTERNAL_TLS" = "true" ]; then
       LISTENER_SECURITY_PROTOCOL_MAP="${LISTENER_SECURITY_PROTOCOL_MAP},EXTERNAL:SSL"
@@ -150,6 +185,17 @@ fi
 #####
 if [ "$KAFKA_AUTHORIZATION_TYPE" = "simple" ]; then
   AUTHORIZER_CLASS_NAME="kafka.security.auth.SimpleAclAuthorizer"
+
+  # Prepare super.users field
+  KAFKA_NAME=$(hostname | rev | cut -d "-" -f2- | rev)
+  ASSEMBLY_NAME=$(echo "${KAFKA_NAME}" | rev | cut -d "-" -f2- | rev)
+  SUPER_USERS="super.users=User:CN=${KAFKA_NAME},O=io.strimzi;User:CN=${ASSEMBLY_NAME}-entity-operator,O=io.strimzi"
+
+  if [ "$KAFKA_AUTHORIZATION_SUPER_USERS" ]; then
+    SUPER_USERS="${SUPER_USERS};${KAFKA_AUTHORIZATION_SUPER_USERS}"
+  fi
+elif [ "$KAFKA_AUTHORIZATION_TYPE" = "kubernetes-rbac" ]; then
+  AUTHORIZER_CLASS_NAME="io.strimzi.kafka.kubernetes.authorizer.KubernetesAuthorizer"
 
   # Prepare super.users field
   KAFKA_NAME=$(hostname | rev | cut -d "-" -f2- | rev)
