@@ -14,7 +14,6 @@ import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodTemplateSpec;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.Service;
-import io.fabric8.kubernetes.api.model.ServiceSpec;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.api.model.apps.StatefulSet;
 import io.fabric8.kubernetes.api.model.apps.StatefulSetBuilder;
@@ -1415,69 +1414,55 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
                 this.kafkaExternalBootstrapDnsName.add(kafkaCluster.getExternalListenerBootstrapOverride().getAddress());
             }
 
-            Promise blockingPromise = Promise.promise();
+            Promise returnPromise = Promise.promise();
 
-            vertx.createSharedWorkerExecutor("kubernetes-ops-pool").executeBlocking(
-                future -> {
-                    String serviceName = KafkaCluster.externalBootstrapServiceName(name);
-                    Future<Void> address = null;
+            String serviceName = KafkaCluster.externalBootstrapServiceName(name);
+            Future<Void> address = null;
 
-                    if (kafkaCluster.isExposedWithNodePort()) {
-                        address = serviceOperations.hasNodePort(namespace, serviceName, 1_000, operationTimeoutMs);
-                    } else {
-                        address = serviceOperations.hasIngressAddress(namespace, serviceName, 1_000, operationTimeoutMs);
-                    }
+            if (kafkaCluster.isExposedWithNodePort()) {
+                address = serviceOperations.hasNodePort(namespace, serviceName, 1_000, operationTimeoutMs);
+            } else {
+                address = serviceOperations.hasIngressAddress(namespace, serviceName, 1_000, operationTimeoutMs);
+            }
 
-                    address.setHandler(res -> {
-                        if (res.succeeded()) {
-                            if (kafkaCluster.isExposedWithLoadBalancer()) {
-                                String bootstrapAddress = null;
+            address.compose(ignore -> serviceOperations.getAsync(namespace, serviceName)).setHandler(res -> {
+                if (res.succeeded()) {
+                    Service service = res.result();
 
-                                if (serviceOperations.get(namespace, serviceName).getStatus().getLoadBalancer().getIngress().get(0).getHostname() != null) {
-                                    bootstrapAddress = serviceOperations.get(namespace, serviceName).getStatus().getLoadBalancer().getIngress().get(0).getHostname();
-                                } else {
-                                    bootstrapAddress = serviceOperations.get(namespace, serviceName).getStatus().getLoadBalancer().getIngress().get(0).getIp();
-                                }
+                    if (kafkaCluster.isExposedWithLoadBalancer()) {
+                        String bootstrapAddress = kafkaCluster.getLoadBalancerAddress(service);
 
-                                if (log.isTraceEnabled()) {
-                                    log.trace("{}: Found address {} for Service {}", reconciliation, bootstrapAddress, serviceName);
-                                }
-
-                                this.kafkaExternalBootstrapDnsName.add(bootstrapAddress);
-
-                                setExternalListenerStatus(new ListenerAddressBuilder()
-                                        .withHost(bootstrapAddress)
-                                        .withPort(kafkaCluster.getLoadbalancerPort())
-                                        .build());
-                            } else if (kafkaCluster.isExposedWithNodePort()) {
-                                ServiceSpec sts = serviceOperations.get(namespace, serviceName).getSpec();
-                                Integer nodePort = sts.getPorts().get(0).getNodePort();
-
-                                setExternalListenerStatus(new ListenerAddressBuilder()
-                                        .withHost("<AnyNodeAddress>")
-                                        .withPort(nodePort)
-                                        .build());
-                            }
-                            future.complete();
-                        } else {
-                            if (kafkaCluster.isExposedWithNodePort()) {
-                                log.warn("{}: Node port was not assigned for Service {}.", reconciliation, serviceName);
-                                future.fail("Node port was not assigned for Service " + serviceName + ".");
-                            } else {
-                                log.warn("{}: No loadbalancer address found in the Status section of Service {} resource. Loadbalancer was probably not provisioned.", reconciliation, serviceName);
-                                future.fail("No loadbalancer address found in the Status section of Service " + serviceName + " resource. Loadbalancer was probably not provisioned.");
-                            }
+                        if (log.isTraceEnabled()) {
+                            log.trace("{}: Found address {} for Service {}", reconciliation, bootstrapAddress, serviceName);
                         }
-                    });
-                }, res -> {
-                    if (res.succeeded()) {
-                        blockingPromise.complete();
-                    } else {
-                        blockingPromise.fail(res.cause());
-                    }
-                });
 
-            return withVoid(blockingPromise.future());
+                        this.kafkaExternalBootstrapDnsName.add(bootstrapAddress);
+
+                        setExternalListenerStatus(new ListenerAddressBuilder()
+                                .withHost(bootstrapAddress)
+                                .withPort(kafkaCluster.getLoadbalancerPort())
+                                .build());
+                    } else if (kafkaCluster.isExposedWithNodePort()) {
+                        Integer nodePort = service.getSpec().getPorts().get(0).getNodePort();
+
+                        setExternalListenerStatus(new ListenerAddressBuilder()
+                                .withHost("<AnyNodeAddress>")
+                                .withPort(nodePort)
+                                .build());
+                    }
+                    returnPromise.complete();
+                } else {
+                    if (kafkaCluster.isExposedWithNodePort()) {
+                        log.warn("{}: Node port was not assigned for Service {}.", reconciliation, serviceName);
+                        returnPromise.fail("Node port was not assigned for Service " + serviceName + ".");
+                    } else {
+                        log.warn("{}: No loadbalancer address found in the Status section of Service {} resource. Loadbalancer was probably not provisioned.", reconciliation, serviceName);
+                        returnPromise.fail("No loadbalancer address found in the Status section of Service " + serviceName + " resource. Loadbalancer was probably not provisioned.");
+                    }
+                }
+            });
+
+            return withVoid(returnPromise.future());
         }
 
         Future<ReconciliationState> kafkaReplicaServicesReady() {
@@ -1485,104 +1470,90 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
                 return withVoid(Future.succeededFuture());
             }
 
-            Promise blockingPromise = Promise.promise();
+            Promise resultPromise = Promise.promise();
 
-            vertx.createSharedWorkerExecutor("kubernetes-ops-pool").executeBlocking(
-                future -> {
-                    int replicas = kafkaCluster.getReplicas();
-                    List<Future> serviceFutures = new ArrayList<>(replicas);
+            int replicas = kafkaCluster.getReplicas();
+            List<Future> serviceFutures = new ArrayList<>(replicas);
 
-                    for (int i = 0; i < replicas; i++) {
-                        String serviceName = KafkaCluster.externalServiceName(name, i);
-                        Promise servicePromise = Promise.promise();
+            for (int i = 0; i < replicas; i++) {
+                String serviceName = KafkaCluster.externalServiceName(name, i);
+                Promise servicePromise = Promise.promise();
 
-                        Future<Void> address = null;
-                        Set<String> dnsNames = new HashSet<>();
+                Future<Void> address = null;
+                Set<String> dnsNames = new HashSet<>();
 
-                        String dnsOverride = kafkaCluster.getExternalServiceAdvertisedHostOverride(i);
-                        if (dnsOverride != null)    {
-                            dnsNames.add(dnsOverride);
-                        }
+                String dnsOverride = kafkaCluster.getExternalServiceAdvertisedHostOverride(i);
+                if (dnsOverride != null)    {
+                    dnsNames.add(dnsOverride);
+                }
 
-                        if (kafkaCluster.isExposedWithNodePort()) {
-                            address = serviceOperations.hasNodePort(namespace, serviceName, 1_000, operationTimeoutMs);
-                        } else {
-                            address = serviceOperations.hasIngressAddress(namespace, serviceName, 1_000, operationTimeoutMs);
-                        }
+                if (kafkaCluster.isExposedWithNodePort()) {
+                    address = serviceOperations.hasNodePort(namespace, serviceName, 1_000, operationTimeoutMs);
+                } else {
+                    address = serviceOperations.hasIngressAddress(namespace, serviceName, 1_000, operationTimeoutMs);
+                }
 
-                        int podNumber = i;
+                int podNumber = i;
 
-                        address.setHandler(res -> {
-                            if (res.succeeded()) {
-                                if (kafkaCluster.isExposedWithLoadBalancer()) {
-                                    // Get the advertised URL
-                                    String serviceAddress = null;
+                address.compose(ignore -> serviceOperations.getAsync(namespace, serviceName)).setHandler(res -> {
+                    if (res.succeeded()) {
+                        Service service = res.result();
 
-                                    if (serviceOperations.get(namespace, serviceName).getStatus().getLoadBalancer().getIngress().get(0).getHostname() != null) {
-                                        serviceAddress = serviceOperations.get(namespace, serviceName).getStatus().getLoadBalancer().getIngress().get(0).getHostname();
-                                    } else {
-                                        serviceAddress = serviceOperations.get(namespace, serviceName).getStatus().getLoadBalancer().getIngress().get(0).getIp();
-                                    }
+                        if (kafkaCluster.isExposedWithLoadBalancer()) {
+                            // Get the advertised URL
+                            String serviceAddress = kafkaCluster.getLoadBalancerAddress(service);
 
-                                    if (log.isTraceEnabled()) {
-                                        log.trace("{}: Found address {} for Service {}", reconciliation, serviceAddress, serviceName);
-                                    }
+                            if (log.isTraceEnabled()) {
+                                log.trace("{}: Found address {} for Service {}", reconciliation, serviceAddress, serviceName);
+                            }
 
-                                    this.kafkaExternalAddresses.add(kafkaCluster.getExternalAdvertisedUrl(podNumber, serviceAddress, "9094"));
+                            this.kafkaExternalAddresses.add(kafkaCluster.getExternalAdvertisedUrl(podNumber, serviceAddress, "9094"));
 
-                                    // Collect the DNS names for certificates
-                                    for (LoadBalancerIngress ingress : serviceOperations.get(namespace, serviceName).getStatus().getLoadBalancer().getIngress())    {
-                                        if (ingress.getHostname() != null) {
-                                            dnsNames.add(ingress.getHostname());
-                                        } else {
-                                            dnsNames.add(ingress.getIp());
-                                        }
-                                    }
-                                } else if (kafkaCluster.isExposedWithNodePort()) {
-                                    // Get the advertised URL
-                                    String port = serviceOperations.get(namespace, serviceName).getSpec().getPorts()
-                                        .get(0).getNodePort().toString();
-
-                                    if (log.isTraceEnabled()) {
-                                        log.trace("{}: Found port {} for Service {}", reconciliation, port, serviceName);
-                                    }
-
-                                    this.kafkaExternalAddresses.add(kafkaCluster.getExternalAdvertisedUrl(podNumber, "", port));
-                                }
-
-                                this.kafkaExternalDnsNames.put(podNumber, dnsNames);
-
-                                servicePromise.complete();
-                            } else {
-                                if (kafkaCluster.isExposedWithNodePort()) {
-                                    log.warn("{}: Node port was not assigned for Service {}.", reconciliation, serviceName);
-                                    servicePromise.fail("Node port was not assigned for Service " + serviceName + ".");
+                            // Collect the DNS names for certificates
+                            for (LoadBalancerIngress ingress : service.getStatus().getLoadBalancer().getIngress())    {
+                                if (ingress.getHostname() != null) {
+                                    dnsNames.add(ingress.getHostname());
                                 } else {
-                                    log.warn("{}: No loadbalancer address found in the Status section of Service {} resource. Loadbalancer was probably not provisioned.", reconciliation, serviceName);
-                                    servicePromise.fail("No loadbalancer address found in the Status section of Service " + serviceName + " resource. Loadbalancer was probably not provisioned.");
+                                    dnsNames.add(ingress.getIp());
                                 }
                             }
-                        });
+                        } else if (kafkaCluster.isExposedWithNodePort()) {
+                            // Get the advertised URL
+                            String port = service.getSpec().getPorts().get(0).getNodePort().toString();
 
-                        serviceFutures.add(servicePromise.future());
-                    }
+                            if (log.isTraceEnabled()) {
+                                log.trace("{}: Found port {} for Service {}", reconciliation, port, serviceName);
+                            }
 
-                    CompositeFuture.join(serviceFutures).setHandler(res -> {
-                        if (res.succeeded()) {
-                            future.complete();
-                        } else {
-                            future.fail(res.cause());
+                            this.kafkaExternalAddresses.add(kafkaCluster.getExternalAdvertisedUrl(podNumber, "", port));
                         }
-                    });
-                }, res -> {
-                    if (res.succeeded()) {
-                        blockingPromise.complete();
+
+                        this.kafkaExternalDnsNames.put(podNumber, dnsNames);
+
+                        servicePromise.complete();
                     } else {
-                        blockingPromise.fail(res.cause());
+                        if (kafkaCluster.isExposedWithNodePort()) {
+                            log.warn("{}: Node port was not assigned for Service {}.", reconciliation, serviceName);
+                            servicePromise.fail("Node port was not assigned for Service " + serviceName + ".");
+                        } else {
+                            log.warn("{}: No loadbalancer address found in the Status section of Service {} resource. Loadbalancer was probably not provisioned.", reconciliation, serviceName);
+                            servicePromise.fail("No loadbalancer address found in the Status section of Service " + serviceName + " resource. Loadbalancer was probably not provisioned.");
+                        }
                     }
                 });
 
-            return withVoid(blockingPromise.future());
+                serviceFutures.add(servicePromise.future());
+            }
+
+            CompositeFuture.join(serviceFutures).setHandler(res -> {
+                if (res.succeeded()) {
+                    resultPromise.complete();
+                } else {
+                    resultPromise.fail(res.cause());
+                }
+            });
+
+            return withVoid(resultPromise.future());
         }
 
         Future<ReconciliationState> kafkaBootstrapRouteReady() {

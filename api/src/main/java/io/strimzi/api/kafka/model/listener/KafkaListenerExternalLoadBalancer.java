@@ -36,7 +36,7 @@ public class KafkaListenerExternalLoadBalancer extends KafkaListenerExternal {
     private boolean tls = true;
     private List<NetworkPolicyPeer> networkPolicyPeers;
     private LoadBalancerListenerOverride overrides;
-    private KafkaListenerExternalConfiguration configuration;
+    private LoadBalancerListenerConfiguration configuration;
 
     @Description("Must be `" + TYPE_LOADBALANCER + "`")
     @Override
@@ -85,11 +85,11 @@ public class KafkaListenerExternalLoadBalancer extends KafkaListenerExternal {
     }
 
     @Description("External listener configuration")
-    public KafkaListenerExternalConfiguration getConfiguration() {
+    public LoadBalancerListenerConfiguration getConfiguration() {
         return configuration;
     }
 
-    public void setConfiguration(KafkaListenerExternalConfiguration configuration) {
+    public void setConfiguration(LoadBalancerListenerConfiguration configuration) {
         this.configuration = configuration;
     }
 

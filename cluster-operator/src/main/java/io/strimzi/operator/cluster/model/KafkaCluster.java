@@ -12,6 +12,7 @@ import io.fabric8.kubernetes.api.model.ContainerPort;
 import io.fabric8.kubernetes.api.model.EnvVar;
 import io.fabric8.kubernetes.api.model.IntOrString;
 import io.fabric8.kubernetes.api.model.LifecycleBuilder;
+import io.fabric8.kubernetes.api.model.LoadBalancerIngress;
 import io.fabric8.kubernetes.api.model.LocalObjectReference;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
 import io.fabric8.kubernetes.api.model.Quantity;
@@ -71,6 +72,7 @@ import io.strimzi.api.kafka.model.listener.KafkaListenerExternalLoadBalancer;
 import io.strimzi.api.kafka.model.listener.KafkaListenerExternalNodePort;
 import io.strimzi.api.kafka.model.listener.KafkaListenerExternalRoute;
 import io.strimzi.api.kafka.model.listener.KafkaListeners;
+import io.strimzi.api.kafka.model.listener.LoadBalancerAddressType;
 import io.strimzi.api.kafka.model.listener.LoadBalancerListenerBrokerOverride;
 import io.strimzi.api.kafka.model.listener.LoadBalancerListenerOverride;
 import io.strimzi.api.kafka.model.listener.NodePortListenerBrokerOverride;
@@ -2226,5 +2228,55 @@ public class KafkaCluster extends AbstractModel {
 
     public void setJmxAuthenticated(boolean jmxAuthenticated) {
         isJmxAuthenticated = jmxAuthenticated;
+    }
+
+    public String getLoadBalancerAddress(Service service)   {
+        String address = null;
+
+        if (isExposedWithLoadBalancer()) {
+            KafkaListenerExternalLoadBalancer listener = (KafkaListenerExternalLoadBalancer) listeners.getExternal();
+
+            // Try to find the preferred address if specified
+            if (listener.getConfiguration() != null && listener.getConfiguration().getPreferredAddressType() != null)   {
+                if (LoadBalancerAddressType.HOSTNAME.equals(listener.getConfiguration().getPreferredAddressType())) {
+                    address = getHostnameAddressFromLoadBalancerService(service);
+                } else if (LoadBalancerAddressType.IP.equals(listener.getConfiguration().getPreferredAddressType()))    {
+                    address = getIpAddressFromLoadBalancerService(service);
+                }
+            }
+
+            // If the address is still not found, try the usual order
+            if (address == null)    {
+                address = getHostnameAddressFromLoadBalancerService(service);
+            }
+
+            if (address == null)    {
+                address = getIpAddressFromLoadBalancerService(service);
+            }
+        }
+
+        return address;
+    }
+
+    private String getHostnameAddressFromLoadBalancerService(Service service)   {
+        if (service.getStatus() != null
+                && service.getStatus().getLoadBalancer() != null
+                && service.getStatus().getLoadBalancer().getIngress() != null
+                && service.getStatus().getLoadBalancer().getIngress().size() > 0)   {
+            return service.getStatus().getLoadBalancer().getIngress().stream().filter(ingress -> ingress.getHostname() != null).map(LoadBalancerIngress::getHostname).findFirst().orElse(null);
+        } else {
+            return null;
+        }
+    }
+
+    private String getIpAddressFromLoadBalancerService(Service service)   {
+        if (service.getStatus() != null
+                && service.getStatus().getLoadBalancer() != null
+                && service.getStatus().getLoadBalancer().getIngress() != null
+                && service.getStatus().getLoadBalancer().getIngress().size() > 0)   {
+            return service.getStatus().getLoadBalancer().getIngress().stream().filter(ingress -> ingress.getIp() != null).map(LoadBalancerIngress::getIp).findFirst().orElse(null);
+        } else {
+            return null;
+        }
     }
 }
