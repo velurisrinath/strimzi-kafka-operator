@@ -14,10 +14,12 @@ jobs:
           ruby-version: '2.7'
       - name: Install asciidoctor
         run: gem install asciidoctor
-      - name: Check docs
-        run: .travis/check_docs.sh
+      - name: Install yq
+        run: .travis/install_yq.sh
       - name: Build documentation
         run: make docu_html
+      - name: Check docs
+        run: .travis/check_docs.sh
       - name: Upload documentation
         uses: actions/upload-artifact@v1
         with:
