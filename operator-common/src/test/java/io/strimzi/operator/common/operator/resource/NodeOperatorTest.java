@@ -4,7 +4,6 @@
  */
 package io.strimzi.operator.common.operator.resource;
 
-import io.fabric8.kubernetes.api.model.DoneableNode;
 import io.fabric8.kubernetes.api.model.Node;
 import io.fabric8.kubernetes.api.model.NodeBuilder;
 import io.fabric8.kubernetes.api.model.NodeList;
@@ -17,8 +16,7 @@ import static java.util.Collections.singletonMap;
 import static org.mockito.Mockito.when;
 
 public class NodeOperatorTest extends AbstractNonNamespacedResourceOperatorTest<KubernetesClient,
-        Node, NodeList, DoneableNode,
-        Resource<Node, DoneableNode>> {
+        Node, NodeList, Resource<Node>> {
 
     @Override
     protected void mocker(KubernetesClient mockClient, MixedOperation op) {
@@ -27,9 +25,14 @@ public class NodeOperatorTest extends AbstractNonNamespacedResourceOperatorTest<
 
     @Override
     protected AbstractNonNamespacedResourceOperator<KubernetesClient, Node, NodeList,
-            DoneableNode, Resource<Node, DoneableNode>> createResourceOperations(
+            Resource<Node>> createResourceOperations(
                     Vertx vertx, KubernetesClient mockClient) {
-        return new NodeOperator(vertx, mockClient, 100);
+        return new NodeOperator(vertx, mockClient) {
+            @Override
+            protected long deleteTimeoutMs() {
+                return 100;
+            }
+        };
     }
 
     @Override
@@ -48,6 +51,16 @@ public class NodeOperatorTest extends AbstractNonNamespacedResourceOperatorTest<
                 .withNewMetadata()
                     .withName(RESOURCE_NAME)
                     .withLabels(singletonMap("foo", "bar"))
+                .endMetadata()
+                .build();
+    }
+
+    @Override
+    protected Node modifiedResource() {
+        return new NodeBuilder()
+                .withNewMetadata()
+                    .withName(RESOURCE_NAME)
+                    .withLabels(singletonMap("foo2", "bar2"))
                 .endMetadata()
                 .build();
     }

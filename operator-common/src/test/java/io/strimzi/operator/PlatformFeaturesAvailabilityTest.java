@@ -7,7 +7,6 @@ package io.strimzi.operator;
 import io.fabric8.kubernetes.client.DefaultKubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.VersionInfo;
-import io.strimzi.operator.common.Util;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
@@ -44,27 +43,15 @@ public class PlatformFeaturesAvailabilityTest {
     }
 
     @Test
-    public void networkPoliciesWithFancyCombinationTest() {
-        PlatformFeaturesAvailability pfa = new PlatformFeaturesAvailability(true, KubernetesVersion.V1_8);
-        assertThat(pfa.isNamespaceAndPodSelectorNetworkPolicySupported(), is(false));
-        pfa = new PlatformFeaturesAvailability(true, KubernetesVersion.V1_11);
-        assertThat(pfa.isNamespaceAndPodSelectorNetworkPolicySupported(), is(false));
-        pfa = new PlatformFeaturesAvailability(false, KubernetesVersion.V1_11);
-        assertThat(pfa.isNamespaceAndPodSelectorNetworkPolicySupported(), is(true));
-        pfa = new PlatformFeaturesAvailability(true, KubernetesVersion.V1_12);
-        assertThat(pfa.isNamespaceAndPodSelectorNetworkPolicySupported(), is(true));
-    }
-
-    @Test
-    public void testVersionDetectionOpenShift39(VertxTestContext context) throws InterruptedException {
+    public void testVersionDetectionOpenShift(VertxTestContext context) throws InterruptedException {
         String version = "{\n" +
                 "  \"major\": \"1\",\n" +
-                "  \"minor\": \"9\",\n" +
-                "  \"gitVersion\": \"v1.9.1+a0ce1bc657\",\n" +
-                "  \"gitCommit\": \"a0ce1bc\",\n" +
+                "  \"minor\": \"20\",\n" +
+                "  \"gitVersion\": \"v1.20.1\",\n" +
+                "  \"gitCommit\": \"c4d752765b3bbac2237bf87cf0b1c2e307844666\",\n" +
                 "  \"gitTreeState\": \"clean\",\n" +
-                "  \"buildDate\": \"2018-06-24T01:54:00Z\",\n" +
-                "  \"goVersion\": \"go1.9\",\n" +
+                "  \"buildDate\": \"2020-12-18T12:00:47Z\",\n" +
+                "  \"goVersion\": \"go1.15.5\",\n" +
                 "  \"compiler\": \"gc\",\n" +
                 "  \"platform\": \"linux/amd64\"\n" +
                 "}";
@@ -75,23 +62,23 @@ public class PlatformFeaturesAvailabilityTest {
 
         Checkpoint a = context.checkpoint();
 
-        PlatformFeaturesAvailability.create(vertx, client).setHandler(context.succeeding(pfa -> context.verify(() -> {
-            assertThat("Versions are not equal", pfa.getKubernetesVersion(), is(KubernetesVersion.V1_9));
+        PlatformFeaturesAvailability.create(vertx, client).onComplete(context.succeeding(pfa -> context.verify(() -> {
+            assertThat("Versions are not equal", pfa.getKubernetesVersion(), is(KubernetesVersion.V1_20));
             stopMockApi(context, mockHttp);
             a.flag();
         })));
     }
 
     @Test
-    public void testVersionDetectionMinikube114(VertxTestContext context) throws InterruptedException {
+    public void testVersionDetectionMinikube(VertxTestContext context) throws InterruptedException {
         String version = "{\n" +
                 "  \"major\": \"1\",\n" +
-                "  \"minor\": \"14\",\n" +
-                "  \"gitVersion\": \"v1.14.0\",\n" +
-                "  \"gitCommit\": \"641856db18352033a0d96dbc99153fa3b27298e5\",\n" +
+                "  \"minor\": \"20\",\n" +
+                "  \"gitVersion\": \"v1.20.1\",\n" +
+                "  \"gitCommit\": \"c4d752765b3bbac2237bf87cf0b1c2e307844666\",\n" +
                 "  \"gitTreeState\": \"clean\",\n" +
-                "  \"buildDate\": \"2019-03-25T15:45:25Z\",\n" +
-                "  \"goVersion\": \"go1.12.1\",\n" +
+                "  \"buildDate\": \"2020-12-18T12:09:25Z\",\n" +
+                "  \"goVersion\": \"go1.15.5\",\n" +
                 "  \"compiler\": \"gc\",\n" +
                 "  \"platform\": \"linux/amd64\"\n" +
                 "}";
@@ -102,8 +89,8 @@ public class PlatformFeaturesAvailabilityTest {
 
         Checkpoint async = context.checkpoint();
 
-        PlatformFeaturesAvailability.create(vertx, client).setHandler(context.succeeding(pfa -> context.verify(() -> {
-            assertThat("Versions are not equal", pfa.getKubernetesVersion(), is(KubernetesVersion.V1_14));
+        PlatformFeaturesAvailability.create(vertx, client).onComplete(context.succeeding(pfa -> context.verify(() -> {
+            assertThat("Versions are not equal", pfa.getKubernetesVersion(), is(KubernetesVersion.V1_20));
             stopMockApi(context, mockHttp);
             async.flag();
         })));
@@ -121,7 +108,7 @@ public class PlatformFeaturesAvailabilityTest {
 
         Checkpoint async = context.checkpoint();
 
-        PlatformFeaturesAvailability.create(vertx, client).setHandler(context.succeeding(pfa -> context.verify(() -> {
+        PlatformFeaturesAvailability.create(vertx, client).onComplete(context.succeeding(pfa -> context.verify(() -> {
             assertThat(pfa.hasRoutes(), is(true));
             assertThat(pfa.hasBuilds(), is(true));
             assertThat(pfa.hasImages(), is(false));
@@ -145,7 +132,7 @@ public class PlatformFeaturesAvailabilityTest {
 
         Checkpoint async = context.checkpoint();
 
-        PlatformFeaturesAvailability.create(vertx, client).setHandler(context.succeeding(pfa -> context.verify(() -> {
+        PlatformFeaturesAvailability.create(vertx, client).onComplete(context.succeeding(pfa -> context.verify(() -> {
             assertThat(pfa.hasRoutes(), is(true));
             assertThat(pfa.hasBuilds(), is(true));
             assertThat(pfa.hasImages(), is(true));
@@ -163,7 +150,7 @@ public class PlatformFeaturesAvailabilityTest {
 
         Checkpoint async = context.checkpoint();
 
-        PlatformFeaturesAvailability.create(vertx, client).setHandler(context.succeeding(pfa -> context.verify(() -> {
+        PlatformFeaturesAvailability.create(vertx, client).onComplete(context.succeeding(pfa -> context.verify(() -> {
             assertThat(pfa.hasRoutes(), is(false));
             assertThat(pfa.hasBuilds(), is(false));
             assertThat(pfa.hasImages(), is(false));
@@ -185,7 +172,7 @@ public class PlatformFeaturesAvailabilityTest {
                 "compiler=gc\n" +
                 "platform=linux/amd64";
 
-        VersionInfo vi = new VersionInfo(Util.parseMap(version));
+        VersionInfo vi = PlatformFeaturesAvailability.parseVersionInfo(version);
 
         context.verify(() -> {
             assertThat(vi.getMajor(), is("1"));
@@ -223,7 +210,7 @@ public class PlatformFeaturesAvailabilityTest {
     public HttpServer startMockApi(VertxTestContext context, List<String> apis) throws InterruptedException {
         String version = "{\n" +
                 "  \"major\": \"1\",\n" +
-                "  \"minor\": \"9\",\n" +
+                "  \"minor\": \"16\",\n" +
                 "  \"gitVersion\": \"v1.9.1+a0ce1bc657\",\n" +
                 "  \"gitCommit\": \"a0ce1bc\",\n" +
                 "  \"gitTreeState\": \"clean\",\n" +

@@ -14,32 +14,35 @@ import io.strimzi.api.annotations.DeprecatedProperty;
 import io.strimzi.api.kafka.model.template.KafkaMirrorMakerTemplate;
 import io.strimzi.api.kafka.model.tracing.Tracing;
 import io.strimzi.crdgenerator.annotations.Description;
+import io.strimzi.crdgenerator.annotations.DescriptionFile;
 import io.strimzi.crdgenerator.annotations.KubeLink;
 import io.strimzi.crdgenerator.annotations.Minimum;
+import io.strimzi.crdgenerator.annotations.PresentInVersions;
 import io.sundr.builder.annotations.Buildable;
 import lombok.EqualsAndHashCode;
 
-import java.io.Serializable;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@DescriptionFile
 @Buildable(
         editableEnabled = false,
         builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonPropertyOrder({
-        "replicas", "image", "whitelist",
-        "consumer", "producer", "resources",
+        "version", "replicas", "image", "consumer",
+        "producer", "resources", "whitelist",
         "affinity", "tolerations", "jvmOptions",
-        "logging", "metrics", "tracing", "template"})
+        "logging", "metrics", "metricsConfig", "tracing", "template"})
 @EqualsAndHashCode
-public class KafkaMirrorMakerSpec implements UnknownPropertyPreserving, Serializable {
-
+public class KafkaMirrorMakerSpec extends Spec implements HasConfigurableMetrics {
     private static final long serialVersionUID = 1L;
 
-    private int replicas;
+    private static final int DEFAULT_REPLICAS = 3;
+
+    private int replicas = DEFAULT_REPLICAS;
+
     private String version;
     private String image;
     private String whitelist;
@@ -53,12 +56,12 @@ public class KafkaMirrorMakerSpec implements UnknownPropertyPreserving, Serializ
     private JvmOptions jvmOptions;
     private Logging logging;
     private Map<String, Object> metrics;
+    private MetricsConfig metricsConfig;
     private Tracing tracing;
     private KafkaMirrorMakerTemplate template;
-    private Map<String, Object> additionalProperties = new HashMap<>(0);
 
     @Description("The number of pods in the `Deployment`.")
-    @Minimum(1)
+    @Minimum(0)
     @JsonProperty(required = true)
     public int getReplicas() {
         return replicas;
@@ -120,15 +123,32 @@ public class KafkaMirrorMakerSpec implements UnknownPropertyPreserving, Serializ
         this.producer = producer;
     }
 
+    @DeprecatedProperty(movedToPath = "spec.metricsConfig", removalVersion = "v1beta2")
+    @PresentInVersions("v1alpha1-v1beta1")
+    @Deprecated
     @JsonInclude(JsonInclude.Include.NON_NULL)
     @Description("The Prometheus JMX Exporter configuration. " +
             "See {JMXExporter} for details of the structure of this configuration.")
+    @Override
     public Map<String, Object> getMetrics() {
         return metrics;
     }
 
+    @Override
     public void setMetrics(Map<String, Object> metrics) {
         this.metrics = metrics;
+    }
+
+    @Description("Metrics configuration.")
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    @Override
+    public MetricsConfig getMetricsConfig() {
+        return metricsConfig;
+    }
+
+    @Override
+    public void setMetricsConfig(MetricsConfig metricsConfig) {
+        this.metricsConfig = metricsConfig;
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -164,7 +184,8 @@ public class KafkaMirrorMakerSpec implements UnknownPropertyPreserving, Serializ
     @Description("The pod's affinity rules.")
     @KubeLink(group = "core", version = "v1", kind = "affinity")
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    @DeprecatedProperty(movedToPath = "spec.template.pod.affinity")
+    @DeprecatedProperty(movedToPath = "spec.template.pod.affinity", removalVersion = "v1beta2")
+    @PresentInVersions("v1alpha1-v1beta1")
     @Deprecated
     public Affinity getAffinity() {
         return affinity;
@@ -178,7 +199,8 @@ public class KafkaMirrorMakerSpec implements UnknownPropertyPreserving, Serializ
     @Description("The pod's tolerations.")
     @KubeLink(group = "core", version = "v1", kind = "toleration")
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
-    @DeprecatedProperty(movedToPath = "spec.template.pod.tolerations")
+    @DeprecatedProperty(movedToPath = "spec.template.pod.tolerations", removalVersion = "v1beta2")
+    @PresentInVersions("v1alpha1-v1beta1")
     @Deprecated
     public List<Toleration> getTolerations() {
         return tolerations;
@@ -190,6 +212,7 @@ public class KafkaMirrorMakerSpec implements UnknownPropertyPreserving, Serializ
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
+    @KubeLink(group = "core", version = "v1", kind = "resourcerequirements")
     @Description("CPU and memory resources to reserve.")
     public ResourceRequirements getResources() {
         return resources;
@@ -227,15 +250,5 @@ public class KafkaMirrorMakerSpec implements UnknownPropertyPreserving, Serializ
 
     public void setTemplate(KafkaMirrorMakerTemplate template) {
         this.template = template;
-    }
-
-    @Override
-    public Map<String, Object> getAdditionalProperties() {
-        return this.additionalProperties;
-    }
-
-    @Override
-    public void setAdditionalProperty(String name, Object value) {
-        this.additionalProperties.put(name, value);
     }
 }

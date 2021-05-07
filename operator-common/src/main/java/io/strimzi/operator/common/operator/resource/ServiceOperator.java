@@ -4,20 +4,36 @@
  */
 package io.strimzi.operator.common.operator.resource;
 
-import io.fabric8.kubernetes.api.model.DoneableService;
+import static io.strimzi.operator.common.Annotations.LOADBALANCER_ANNOTATION_WHITELIST;
+
 import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.ServiceList;
 import io.fabric8.kubernetes.api.model.ServicePort;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.ServiceResource;
+import io.strimzi.operator.common.Util;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+
+import java.util.Map;
+import java.util.function.Function;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Operations for {@code Service}s.
  */
-public class ServiceOperator extends AbstractResourceOperator<KubernetesClient, Service, ServiceList, DoneableService, ServiceResource<Service, DoneableService>> {
+public class ServiceOperator extends AbstractResourceOperator<KubernetesClient, Service, ServiceList, ServiceResource<Service>> {
+
+    protected static final Pattern IGNORABLE_PATHS = Pattern.compile(
+            "^(/metadata/managedFields" +
+                    "|/spec/sessionAffinity" +
+                    "|/spec/clusterIP" +
+                    "|/spec/clusterIPs" +
+                    "|/spec/ipFamily" + // Legacy field from Kube 1.19 and earlier. We just ignore it, it is not configurable.
+                    "|/spec/ipFamilies" + // Immutable field
+                    "|/status)$");
 
     private final EndpointOperator endpointOperations;
     /**
@@ -31,8 +47,15 @@ public class ServiceOperator extends AbstractResourceOperator<KubernetesClient, 
     }
 
     @Override
-    protected MixedOperation<Service, ServiceList, DoneableService, ServiceResource<Service, DoneableService>> operation() {
+    protected MixedOperation<Service, ServiceList, ServiceResource<Service>> operation() {
         return client.services();
+    }
+
+    /**
+     * @return  Returns the Pattern for matching paths which can be ignored in the resource diff
+     */
+    protected Pattern ignorablePaths() {
+        return IGNORABLE_PATHS;
     }
 
     /**
@@ -53,17 +76,46 @@ public class ServiceOperator extends AbstractResourceOperator<KubernetesClient, 
     @Override
     protected Future<ReconcileResult<Service>> internalPatch(String namespace, String name, Service current, Service desired) {
         try {
-            if (current.getSpec() != null && desired.getSpec() != null
-                    && (("NodePort".equals(current.getSpec().getType()) && "NodePort".equals(desired.getSpec().getType()))
-                    || ("LoadBalancer".equals(current.getSpec().getType()) && "LoadBalancer".equals(desired.getSpec().getType()))))   {
-                patchNodePorts(current, desired);
-                patchHealthCheckPorts(current, desired);
+            if (current.getSpec() != null && desired.getSpec() != null) {
+                if (("NodePort".equals(current.getSpec().getType()) && "NodePort".equals(desired.getSpec().getType()))
+                        || ("LoadBalancer".equals(current.getSpec().getType()) && "LoadBalancer".equals(desired.getSpec().getType())))   {
+                    patchNodePorts(current, desired);
+                    patchHealthCheckPorts(current, desired);
+                    patchAnnotations(current, desired);
+                }
+
+                patchDualStackNetworking(current, desired);
             }
 
             return super.internalPatch(namespace, name, current, desired);
         } catch (Exception e) {
             log.error("Caught exception while patching {} {} in namespace {}", resourceKind, name, namespace, e);
             return Future.failedFuture(e);
+        }
+    }
+
+    /**
+     * Finds annotations managed by the Rancher cattle agents (if any), and merge them into the desired spec.
+     *
+     * This makes sure there is no infinite loop where Rancher tries to add annotations, while Rancher keeps
+     * removing them during reconciliation.
+     *
+     * @param current   Current Service
+     * @param desired   Desired Service
+     */
+    private void patchAnnotations(Service current, Service desired) {
+        Map<String, String> currentAnnotations = current.getMetadata().getAnnotations();
+        if (currentAnnotations != null) {
+            Map<String, String> matchedAnnotations = currentAnnotations.keySet().stream()
+                    .filter(annotation -> LOADBALANCER_ANNOTATION_WHITELIST.stream().anyMatch(whitelist -> whitelist.test(annotation)))
+                    .collect(Collectors.toMap(Function.identity(), currentAnnotations::get));
+
+            if (!matchedAnnotations.isEmpty()) {
+                desired.getMetadata().setAnnotations(Util.mergeLabelsOrAnnotations(
+                        desired.getMetadata().getAnnotations(),
+                        matchedAnnotations
+                ));
+            }
         }
     }
 
@@ -102,8 +154,40 @@ public class ServiceOperator extends AbstractResourceOperator<KubernetesClient, 
         }
     }
 
-    public Future<Void> endpointReadiness(String namespace, Service desired, long pollInterval, long operationTimeoutMs) {
-        return endpointOperations.readiness(namespace, desired.getMetadata().getName(), pollInterval, operationTimeoutMs);
+    /**
+     * DualStack Kubernetes clusters (https://kubernetes.io/docs/concepts/services-networking/dual-stack/) specify
+     * ipFamilyPolicy and ipFamilies fields of the Service spec section. This fields indicates whether IPv4 or IPv6
+     * should be used. Kubernetes have different defaults for these fields depending on the environment. So when they
+     * are not set by us / Strimzi user, we just copy the default set by Kubernetes. In addition, the ipFamilies field
+     * is immutable and cannot be changed. This method is used to patch the service and set the value from the current
+     * resource in the desired to allow to patch / reconcile the Service. Without this the reconciliation would fail.
+     *
+     * @param current   Current Service
+     * @param desired   Desired Service
+     */
+    protected void patchDualStackNetworking(Service current, Service desired) {
+        desired.getSpec().setIpFamilies(current.getSpec().getIpFamilies());
+
+        if (desired.getSpec().getIpFamilyPolicy() == null) {
+            desired.getSpec().setIpFamilyPolicy(current.getSpec().getIpFamilyPolicy());
+        }
+    }
+
+    /**
+     * Deletes the resource with the given namespace and name and completes the given future accordingly.
+     * This method will do a cascading delete.
+     *
+     * @param namespace Namespace of the resource which should be deleted
+     * @param name Name of the resource which should be deleted
+     *
+     * @return Future with result of the reconciliation
+     */
+    protected Future<ReconcileResult<Service>> internalDelete(String namespace, String name) {
+        return internalDelete(namespace, name, true);
+    }
+
+    public Future<Void> endpointReadiness(String namespace, String name, long pollInterval, long operationTimeoutMs) {
+        return endpointOperations.readiness(namespace, name, pollInterval, operationTimeoutMs);
     }
 
     /**
@@ -127,7 +211,7 @@ public class ServiceOperator extends AbstractResourceOperator<KubernetesClient, 
      * @return Whether the Service already has assigned ingress address.
      */
     public boolean isIngressAddressReady(String namespace, String name) {
-        ServiceResource<Service, DoneableService> resourceOp = operation().inNamespace(namespace).withName(name);
+        ServiceResource<Service> resourceOp = operation().inNamespace(namespace).withName(name);
         Service resource = resourceOp.get();
 
         if (resource != null && resource.getStatus() != null && resource.getStatus().getLoadBalancer() != null && resource.getStatus().getLoadBalancer().getIngress() != null && resource.getStatus().getLoadBalancer().getIngress().size() > 0) {
@@ -160,7 +244,7 @@ public class ServiceOperator extends AbstractResourceOperator<KubernetesClient, 
      * @return Whether the Service already has assigned node ports.
      */
     public boolean isNodePortReady(String namespace, String name) {
-        ServiceResource<Service, DoneableService> resourceOp = operation().inNamespace(namespace).withName(name);
+        ServiceResource<Service> resourceOp = operation().inNamespace(namespace).withName(name);
         Service resource = resourceOp.get();
 
         if (resource != null && resource.getSpec() != null && resource.getSpec().getPorts() != null) {

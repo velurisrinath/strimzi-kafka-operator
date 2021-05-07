@@ -9,6 +9,7 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import io.fabric8.kubernetes.api.model.ResourceRequirements;
 import io.strimzi.api.kafka.model.template.KafkaExporterTemplate;
 import io.strimzi.crdgenerator.annotations.Description;
+import io.strimzi.crdgenerator.annotations.KubeLink;
 import io.sundr.builder.annotations.Buildable;
 import lombok.EqualsAndHashCode;
 
@@ -23,7 +24,7 @@ import java.util.Map;
         editableEnabled = false,
         builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
-@JsonInclude(JsonInclude.Include.NON_NULL)
+@JsonInclude(JsonInclude.Include.NON_DEFAULT)
 @JsonPropertyOrder({
         "image", "groupRegex",
         "topicRegex", "resources", "logging",
@@ -56,7 +57,7 @@ public class KafkaExporterSpec implements UnknownPropertyPreserving, Serializabl
 
     @Description("Regular expression to specify which consumer groups to collect. " +
             "Default value is `.*`.")
-    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
     public String getGroupRegex() {
         return groupRegex;
     }
@@ -67,7 +68,7 @@ public class KafkaExporterSpec implements UnknownPropertyPreserving, Serializabl
 
     @Description("Regular expression to specify which topics to collect. " +
             "Default value is `.*`.")
-    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
     public String getTopicRegex() {
         return topicRegex;
     }
@@ -77,7 +78,7 @@ public class KafkaExporterSpec implements UnknownPropertyPreserving, Serializabl
     }
 
     @Description("Enable Sarama logging, a Go client library used by the Kafka Exporter.")
-    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
     public boolean getEnableSaramaLogging() {
         return enableSaramaLogging;
     }
@@ -89,7 +90,7 @@ public class KafkaExporterSpec implements UnknownPropertyPreserving, Serializabl
     @Description("Only log messages with the given severity or above. " +
             "Valid levels: [`debug`, `info`, `warn`, `error`, `fatal`]. " +
             "Default log level is `info`.")
-    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
     public String getLogging() {
         return logging;
     }
@@ -99,6 +100,7 @@ public class KafkaExporterSpec implements UnknownPropertyPreserving, Serializabl
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
+    @KubeLink(group = "core", version = "v1", kind = "resourcerequirements")
     @Description("CPU and memory resources to reserve.")
     public ResourceRequirements getResources() {
         return resources;

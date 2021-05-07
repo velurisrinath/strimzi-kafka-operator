@@ -8,6 +8,7 @@ import io.fabric8.kubernetes.api.model.ConfigMap;
 
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.resources.ResourceOperation;
 import io.strimzi.test.TestUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -22,6 +23,7 @@ import static io.strimzi.test.k8s.KubeClusterResource.kubeClient;
 public class ConfigMapUtils {
 
     private static final Logger LOGGER = LogManager.getLogger(ConfigMapUtils.class);
+    private static final long DELETION_TIMEOUT = ResourceOperation.getTimeoutForResourceDeletion();
 
     private ConfigMapUtils() { }
 
@@ -31,12 +33,12 @@ public class ConfigMapUtils {
      */
     public static void waitForConfigMapRecovery(String name, String configMapUid) {
         LOGGER.info("Waiting for config map {}-{} recovery in namespace {}", name, configMapUid, kubeClient().getNamespace());
-        TestUtils.waitFor("Config map " + name + " to be recovered", Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, Constants.TIMEOUT_FOR_RESOURCE_READINESS,
+        TestUtils.waitFor("Config map " + name + " to be recovered", Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, Constants.TIMEOUT_FOR_RESOURCE_RECOVERY,
             () -> !kubeClient().getConfigMapUid(name).equals(configMapUid));
         LOGGER.info("Config map {} was recovered", name);
     }
 
-    public static void waitForConfigMapLabelsChange(String configMapName, Map<String, String> labels) {
+    public static void waitForConfigMapLabelsChange(String namespaceName, String configMapName, Map<String, String> labels) {
         for (Map.Entry<String, String> entry : labels.entrySet()) {
             boolean isK8sTag = entry.getKey().equals("controller-revision-hash") || entry.getKey().equals("statefulset.kubernetes.io/pod-name");
             boolean isStrimziTag = entry.getKey().startsWith(Labels.STRIMZI_DOMAIN);
@@ -44,27 +46,33 @@ public class ConfigMapUtils {
             if (!(isStrimziTag || isK8sTag)) {
                 LOGGER.info("Waiting for ConfigMap {} label change {} -> {}", configMapName, entry.getKey(), entry.getValue());
                 TestUtils.waitFor("ConfigMap label change " + entry.getKey() + " -> " + entry.getValue(), Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS,
-                    Constants.TIMEOUT_FOR_RESOURCE_READINESS, () ->
-                        kubeClient().getConfigMap(configMapName).getMetadata().getLabels().get(entry.getKey()).equals(entry.getValue())
+                    Constants.GLOBAL_TIMEOUT, () ->
+                        kubeClient(namespaceName).getConfigMap(namespaceName, configMapName).getMetadata().getLabels().get(entry.getKey()).equals(entry.getValue())
                 );
             }
         }
     }
 
-    public static void waitForConfigMapLabelsDeletion(String configMapName, String... labelKeys) {
+    public static void waitForConfigMapLabelsChange(String configMapName, Map<String, String> labels) {
+        waitForConfigMapLabelsChange(kubeClient().getNamespace(), configMapName, labels);
+    }
+
+    public static void waitForConfigMapLabelsDeletion(String namespaceName, String configMapName, String... labelKeys) {
         for (final String labelKey : labelKeys) {
             LOGGER.info("Waiting for ConfigMap {} label {} change to {}", configMapName, labelKey, null);
             TestUtils.waitFor("Kafka configMap label" + labelKey + " change to " + null, Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS,
-                Constants.TIMEOUT_FOR_RESOURCE_READINESS, () ->
-                    kubeClient().getConfigMap(configMapName).getMetadata().getLabels().get(labelKey) == null
-            );
+                DELETION_TIMEOUT, () -> {
+                    if (kubeClient(namespaceName).getConfigMap(namespaceName, configMapName).getMetadata().getLabels() != null)
+                        return kubeClient(namespaceName).getConfigMap(namespaceName, configMapName).getMetadata().getLabels().get(labelKey) == null;
+                    return false;
+                });
             LOGGER.info("ConfigMap {} label {} change to {}", configMapName, labelKey, null);
         }
     }
 
     public static void waitUntilConfigMapDeletion(String clusterName) {
         LOGGER.info("Waiting for all ConfigMaps of cluster {} deletion", clusterName);
-        TestUtils.waitFor("ConfigMaps will be deleted {}", Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_STATUS_TIMEOUT,
+        TestUtils.waitFor("ConfigMaps will be deleted {}", Constants.GLOBAL_POLL_INTERVAL, DELETION_TIMEOUT,
             () -> {
                 List<ConfigMap> cmList = kubeClient().listConfigMaps().stream().filter(cm -> cm.getMetadata().getName().contains(clusterName)).collect(Collectors.toList());
                 if (cmList.isEmpty()) {

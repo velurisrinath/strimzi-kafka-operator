@@ -4,14 +4,15 @@
 
 [id='con-custom-resources-status-{context}']
 
-= {ProductName} custom resource status information
+= Strimzi custom resource status information
 
 Several resources have a `status` property, as described in the following table.
 
+.Custom resource status properties
 [cols="3*",options="header",stripes="none",separator=¦]
 |===
 
-m¦{ProductName} resource
+m¦Strimzi resource
 ¦Schema reference
 ¦Publishes status information on...
 
@@ -29,7 +30,7 @@ m¦KafkaConnectS2I
 
 m¦KafkaConnector
 ¦xref:type-KafkaConnectorStatus-reference[]
-¦`KafkaConnector` resources, if deployed.
+¦KafkaConnector resources, if deployed.
 
 m¦KafkaMirrorMaker
 ¦xref:type-KafkaMirrorMakerStatus-reference[]
@@ -45,7 +46,7 @@ m¦KafkaUser
 
 m¦KafkaBridge
 ¦xref:type-KafkaBridgeStatus-reference[]
-¦The {ProductName} Kafka Bridge, if deployed.
+¦The Strimzi Kafka Bridge, if deployed.
 
 |===
 
@@ -57,6 +58,8 @@ The `status` property of a resource provides information on the resource's:
 
 The `status` property also provides resource-specific information. For example:
 
+* `KafkaStatus` provides information on listener addresses, and the id of the Kafka cluster.
+
 * `KafkaConnectStatus` provides the REST API endpoint for Kafka Connect connectors.
 
 * `KafkaUserStatus` provides the user name of the Kafka user and the `Secret` in which their credentials are stored.
@@ -67,13 +70,13 @@ A resource's _current state_ is useful for tracking progress related to the reso
 
 The _last observed generation_ is the generation of the resource that was last reconciled by the Cluster Operator. If the value of `observedGeneration` is different from the value of `metadata.generation`, the operator has not yet processed the latest update to the resource. If these values are the same, the status information reflects the most recent changes to the resource.
 
-{ProductName} creates and maintains the status of custom resources, periodically evaluating the current state of the custom resource and updating its status accordingly.
+Strimzi creates and maintains the status of custom resources, periodically evaluating the current state of the custom resource and updating its status accordingly.
 When performing an update on a custom resource using `kubectl edit`, for example, its `status` is not editable. Moreover, changing the `status` would not affect the configuration of the Kafka cluster.
 
 Here we see the `status` property specified for a Kafka custom resource.
 
 .Kafka custom resource with status
-[source,yaml,subs="attributes+"]
+[source,shell,subs="+quotes,attributes"]
 ----
 apiVersion: {KafkaApiVersion}
 kind: Kafka
@@ -82,7 +85,7 @@ spec:
   # ...
 status:
   conditions: <1>
-  - lastTransitionTime: 2019-07-23T23:46:57+0000
+  - lastTransitionTime: 2021-07-23T23:46:57+0000
     status: "True"
     type: Ready <2>
   observedGeneration: 4 <3>
@@ -109,12 +112,14 @@ status:
       ...
       -----END CERTIFICATE-----
     type: external
-    # ...
+  clusterId: _CLUSTER-ID_ <5>
+# ...
 ----
 <1> Status `conditions` describe criteria related to the status that cannot be deduced from the existing resource information, or are specific to the instance of a resource.
 <2> The `Ready` condition indicates whether the Cluster Operator currently considers the Kafka cluster able to handle traffic.
 <3> The `observedGeneration` indicates the generation of the `Kafka` custom resource that was last reconciled by the Cluster Operator.
 <4> The `listeners` describe the current Kafka bootstrap addresses by type.
+<5> The Kafka cluster id.
 +
 IMPORTANT: The address in the custom resource status for external listeners with type `nodeport` is currently not supported.
 

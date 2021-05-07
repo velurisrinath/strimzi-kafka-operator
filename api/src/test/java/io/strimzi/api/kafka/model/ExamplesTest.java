@@ -12,9 +12,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import io.fabric8.kubernetes.api.model.KubernetesResource;
-import io.fabric8.kubernetes.api.model.apiextensions.CustomResourceDefinitionSpec;
-import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBinding;
-import io.fabric8.kubernetes.api.model.rbac.RoleBinding;
+import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinitionSpec;
 import io.strimzi.api.kafka.Crds;
 import io.strimzi.test.TestUtils;
 import org.junit.jupiter.api.Test;
@@ -23,6 +21,7 @@ import java.io.File;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Stack;
@@ -35,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * The purpose of this test is to check that all the resources in the
- * {@code ../examples} directory are valid.
+ * {@code ../packaging/examples} directory are valid.
  */
 public class ExamplesTest {
 
@@ -50,14 +49,14 @@ public class ExamplesTest {
      * and validating them.
      */
     @Test
-    public void examples() throws Exception {
-        validateRecursively(new File("../examples"));
+    public void examples() {
+        validateRecursively(new File(TestUtils.USER_PATH + "/../packaging/examples"));
     }
 
     private void validateRecursively(File directory) {
         for (File f : directory.listFiles()) {
             if (f.isDirectory()) {
-                if (f.getAbsolutePath().contains("examples/metrics/grafana") || f.getAbsolutePath().contains("examples/metrics/prometheus"))  {
+                if (f.getAbsolutePath().contains("packaging/examples/metrics/grafana") || f.getAbsolutePath().contains("packaging/examples/metrics/prometheus"))  {
                     continue;
                 } else {
                     validateRecursively(f);
@@ -101,12 +100,6 @@ public class ExamplesTest {
     private void recurseForAdditionalProperties(Stack<String> path, Object resource) {
         try {
             Class<?> cls = resource.getClass();
-            if (RoleBinding.class.equals(cls)
-                    || ClusterRoleBinding.class.equals(cls)) {
-                // XXX: hack because fabric8 RoleBinding reflect the openshift role binding API
-                // not the k8s one, and has an unexpected apiGroup property
-                return;
-            }
             for (Method method : cls.getMethods()) {
                 checkForJsonAnyGetter(path, resource, cls, method);
             }
@@ -131,7 +124,8 @@ public class ExamplesTest {
                 Object result = method.invoke(resource);
                 if (result != null
                     && !result.getClass().isPrimitive()
-                    && !result.getClass().isEnum()) {
+                    && !result.getClass().isEnum()
+                    && !result.getClass().equals(Collections.emptyMap().getClass())) {
                     path.push(method.getName());
                     recurseForAdditionalProperties(path, result);
                     path.pop();

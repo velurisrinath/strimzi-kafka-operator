@@ -15,6 +15,7 @@ import io.strimzi.crdgenerator.annotations.Description;
 import io.strimzi.crdgenerator.annotations.Example;
 import io.strimzi.crdgenerator.annotations.KubeLink;
 import io.strimzi.crdgenerator.annotations.Minimum;
+import io.strimzi.crdgenerator.annotations.MinimumItems;
 import io.strimzi.crdgenerator.annotations.OneOf;
 import io.strimzi.crdgenerator.annotations.Pattern;
 
@@ -22,7 +23,6 @@ import java.util.List;
 import java.util.Map;
 
 @Crd(
-    apiVersion = "apiextensions.k8s.io/v1beta1",
     spec = @Crd.Spec(
         group = "crdgenerator.strimzi.io",
         names = @Crd.Spec.Names(
@@ -30,7 +30,6 @@ import java.util.Map;
             plural = "examples",
             categories = {"strimzi"}),
         scope = "Namespaced",
-        version = "v1alpha1",
     versions = {
         @Crd.Spec.Version(name = "v1alpha1", served = true, storage = true),
         @Crd.Spec.Version(name = "v1beta1", served = true, storage = false)
@@ -68,6 +67,7 @@ public class ExampleCrd<T, U extends Number, V extends U> extends CustomResource
     @Description("Example of field property.")
     public String fieldProperty;
 
+    @MinimumItems(1)
     public String[] arrayProperty;
 
     public String[][] arrayProperty2;
@@ -110,11 +110,17 @@ public class ExampleCrd<T, U extends Number, V extends U> extends CustomResource
 
     public List<? extends List<? extends U>> listOfWildcardTypeVar4;
 
+    public List<CustomisedEnum> listOfCustomizedEnum;
+
+    public List<NormalEnum> listOfNormalEnum;
+
     public List<Map<String, Object>> listOfMaps;
 
     private String either;
     private String or;
 
+    private MapOrList alternatives;
+    private Type1OrType2 typedAlternatives;
 
     @Description("Example of complex type.")
     public static class ObjectProperty {
@@ -276,5 +282,21 @@ public class ExampleCrd<T, U extends Number, V extends U> extends CustomResource
 
     public void setAffinity(Affinity affinity) {
         this.affinity = affinity;
+    }
+
+    public MapOrList getAlternatives() {
+        return alternatives;
+    }
+
+    public void setAlternatives(MapOrList alternatives) {
+        this.alternatives = alternatives;
+    }
+
+    public Type1OrType2 getTypedAlternatives() {
+        return typedAlternatives;
+    }
+
+    public void setTypedAlternatives(Type1OrType2 alternatives) {
+        this.typedAlternatives = alternatives;
     }
 }

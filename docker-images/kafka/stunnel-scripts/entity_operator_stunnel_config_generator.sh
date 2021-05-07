@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -e
 
 # path were the Secret with EO certificates is mounted
 EO_CERTS_KEYS=/etc/tls-sidecar/eo-certs
@@ -6,9 +7,10 @@ EO_CERTS_KEYS=/etc/tls-sidecar/eo-certs
 CA_CERTS=/tmp/cluster-ca.crt
 cat /etc/tls-sidecar/cluster-ca-certs/*.crt > "$CA_CERTS"
 
-echo "pid = /usr/local/var/run/stunnel.pid"
+echo "pid = /tmp/stunnel.pid"
 echo "foreground = yes"
 echo "debug = $TLS_SIDECAR_LOG_LEVEL"
+echo "sslVersion = TLSv1.2"
 
 cat <<-EOF
 [zookeeper-2181]

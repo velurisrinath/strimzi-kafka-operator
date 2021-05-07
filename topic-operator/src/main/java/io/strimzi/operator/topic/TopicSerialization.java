@@ -6,6 +6,8 @@ package io.strimzi.operator.topic;
 
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
@@ -25,6 +27,9 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
 
 import static java.lang.String.format;
 
@@ -85,10 +90,15 @@ class TopicSerialization {
         Topic.Builder builder = new Topic.Builder()
                 .withMapName(kafkaTopic.getMetadata().getName())
                 .withTopicName(getTopicName(kafkaTopic))
-                .withNumPartitions(getPartitions(kafkaTopic))
-                .withNumReplicas(getReplicas(kafkaTopic))
                 .withConfig(topicConfigFromTopicConfig(kafkaTopic))
                 .withMetadata(kafkaTopic.getMetadata());
+
+        if (kafkaTopic.getSpec().getPartitions() != null) {
+            builder.withNumPartitions(getPartitions(kafkaTopic));
+        }
+        if (kafkaTopic.getSpec().getReplicas() != null) {
+            builder.withNumReplicas(getReplicas(kafkaTopic));
+        }
         return builder.build();
     }
 
@@ -145,7 +155,7 @@ class TopicSerialization {
                     .build();
         }
 
-        KafkaTopic kt = new KafkaTopicBuilder().withApiVersion(KafkaTopic.RESOURCE_GROUP + "/" + KafkaTopic.V1BETA1)
+        KafkaTopic kt = new KafkaTopicBuilder()
                 .withMetadata(om)
                 // TODO .withUid()
                 .withNewSpec()
@@ -186,7 +196,9 @@ class TopicSerialization {
             }
             newTopic = new NewTopic(topic.getTopicName().toString(), assignment);
         } else {
-            newTopic = new NewTopic(topic.getTopicName().toString(), topic.getNumPartitions(), topic.getNumReplicas());
+            Optional<Integer> numPartitions = topic.getNumPartitions() == -1 ? Optional.empty() : Optional.of(topic.getNumPartitions());
+            Optional<Short> numReplicas = topic.getNumReplicas() == -1 ? Optional.empty() : Optional.of(topic.getNumReplicas());
+            newTopic = new NewTopic(topic.getTopicName().toString(), numPartitions, numReplicas);
         }
 
         newTopic.configs(topic.getConfig());
@@ -224,7 +236,8 @@ class TopicSerialization {
                 .withNumReplicas((short) meta.getDescription().partitions().get(0).replicas().size())
                 .withMetadata(null);
         for (ConfigEntry entry: meta.getConfig().entries()) {
-            if (!entry.isDefault()) {
+            if (entry.source() != ConfigEntry.ConfigSource.DEFAULT_CONFIG
+                && entry.source() != ConfigEntry.ConfigSource.STATIC_BROKER_CONFIG) {
                 builder.withConfigEntry(entry.name(), entry.value());
             }
         }
@@ -236,26 +249,35 @@ class TopicSerialization {
      * This is what is stored in the znodes owned by the {@link ZkTopicStore}.
      */
     public static byte[] toJson(Topic topic) {
-        ObjectMapper mapper = objectMapper();
-        ObjectNode root = mapper.createObjectNode();
+        return toBytes((mapper, root) -> {
+            fillObjectNode(root, topic);
+        });
+    }
+
+    /**
+     * Write topic to JsonNode.
+     *
+     * @param topic the topic
+     * @return topic as json node
+     */
+    public static JsonNode toJsonNode(Topic topic) {
+        ObjectNode root = objectMapper().createObjectNode();
+        fillObjectNode(root, topic);
+        return root;
+    }
+
+    private static void fillObjectNode(ObjectNode root, Topic topic) {
         // TODO Do we store the k8s uid here?
         root.put(JSON_KEY_MAP_NAME, topic.getOrAsKubeName().toString());
         root.put(JSON_KEY_TOPIC_NAME, topic.getTopicName().toString());
         root.put(JSON_KEY_PARTITIONS, topic.getNumPartitions());
         root.put(JSON_KEY_REPLICAS, topic.getNumReplicas());
 
-        ObjectNode config = mapper.createObjectNode();
+        ObjectNode config = objectMapper().createObjectNode();
         for (Map.Entry<String, String> entry : topic.getConfig().entrySet()) {
             config.put(entry.getKey(), entry.getValue());
         }
         root.set(JSON_KEY_CONFIG, config);
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        try {
-            mapper.writeValue(baos, root);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-        return baos.toByteArray();
     }
 
     /**
@@ -264,13 +286,32 @@ class TopicSerialization {
      */
     @SuppressWarnings("unchecked")
     public static Topic fromJson(byte[] json) {
-        ObjectMapper mapper = objectMapper();
-        Map<String, Object> root = null;
-        try {
-            root = mapper.readValue(json, Map.class);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        return fromJson(json, (mapper, bytes) -> {
+            Map<String, Object> root;
+            try {
+                root = mapper.readValue(json, Map.class);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+            return fromMap(root);
+        });
+    }
+
+    /**
+     * Read Topic from json node.
+     *
+     * @param root the map
+     * @return topic from map
+     */
+    public static Topic fromJsonNode(JsonNode root) {
+        TypeReference<Map<String, Object>> ref = new TypeReference<Map<String, Object>>() {
+        };
+        Map<String, Object> map = objectMapper().convertValue(root, ref);
+        return fromMap(map);
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Topic fromMap(Map<String, Object> root) {
         Topic.Builder builder = new Topic.Builder();
         builder.withTopicName((String) root.get(JSON_KEY_TOPIC_NAME))
                 .withMapName((String) root.get(JSON_KEY_MAP_NAME))
@@ -281,6 +322,24 @@ class TopicSerialization {
             builder.withConfigEntry(entry.getKey(), entry.getValue());
         }
         return builder.build();
+    }
+
+    static byte[] toBytes(BiConsumer<ObjectMapper, ObjectNode> consumer) {
+        ObjectMapper mapper = objectMapper();
+        ObjectNode root = mapper.createObjectNode();
+        consumer.accept(mapper, root);
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try {
+            mapper.writeValue(baos, root);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        return baos.toByteArray();
+    }
+
+    static <T> T fromJson(byte[] json, BiFunction<ObjectMapper, byte[], T> fn) {
+        ObjectMapper mapper = objectMapper();
+        return fn.apply(mapper, json);
     }
 
     private static ObjectMapper objectMapper() {

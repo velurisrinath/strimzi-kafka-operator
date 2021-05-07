@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -e
 
 CC_CAPACITY_FILE="/tmp/capacity.json"
 CC_CLUSTER_CONFIG_FILE="/tmp/clusterConfig.json"
@@ -20,8 +21,6 @@ cat <<EOF > $CC_CAPACITY_FILE
 }
 EOF
 
-cat $CC_CAPACITY_FILE
-
 # Generate cluster config
 cat <<EOF > $CC_CLUSTER_CONFIG_FILE
 {
@@ -30,7 +29,7 @@ min.insync.replicas=$MIN_INSYNC_REPLICAS
 EOF
 
 # Write all webserver access logs to stdout
-ln -s /dev/stdout $CC_ACCESS_LOG
+ln -sf /dev/stdout $CC_ACCESS_LOG
 
 # Write the config file
 cat <<EOF
@@ -43,6 +42,7 @@ capacity.config.file=$CC_CAPACITY_FILE
 cluster.configs.file=$CC_CLUSTER_CONFIG_FILE
 webserver.accesslog.path=$CC_ACCESS_LOG
 webserver.http.address=0.0.0.0
+webserver.http.cors.allowmethods=OPTIONS,GET
 security.protocol=SSL
 ssl.keystore.type=PKCS12
 ssl.keystore.location=/tmp/cruise-control/replication.keystore.p12

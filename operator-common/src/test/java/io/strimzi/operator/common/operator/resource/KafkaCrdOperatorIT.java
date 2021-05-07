@@ -4,13 +4,13 @@
  */
 package io.strimzi.operator.common.operator.resource;
 
-import io.fabric8.kubernetes.api.model.apiextensions.CustomResourceDefinition;
 import io.fabric8.kubernetes.client.KubernetesClient;
-import io.strimzi.api.kafka.Crds;
 import io.strimzi.api.kafka.KafkaList;
-import io.strimzi.api.kafka.model.DoneableKafka;
 import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.KafkaBuilder;
+import io.strimzi.api.kafka.model.listener.arraylistener.GenericKafkaListenerBuilder;
+import io.strimzi.api.kafka.model.listener.arraylistener.KafkaListenerType;
+import io.strimzi.test.TestUtils;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import org.apache.logging.log4j.LogManager;
@@ -27,17 +27,22 @@ import static org.hamcrest.MatcherAssert.assertThat;
  * test them against real clusters.
  */
 @ExtendWith(VertxExtension.class)
-public class KafkaCrdOperatorIT extends AbstractCustomResourceOperatorIT<KubernetesClient, Kafka, KafkaList, DoneableKafka> {
+public class KafkaCrdOperatorIT extends AbstractCustomResourceOperatorIT<KubernetesClient, Kafka, KafkaList> {
     protected static final Logger log = LogManager.getLogger(KafkaCrdOperatorIT.class);
 
     @Override
     protected CrdOperator operator() {
-        return new CrdOperator(vertx, client, Kafka.class, KafkaList.class, DoneableKafka.class, Crds.kafka());
+        return new CrdOperator(vertx, client, Kafka.class, KafkaList.class, Kafka.RESOURCE_KIND);
     }
 
     @Override
-    protected CustomResourceDefinition getCrd() {
-        return Crds.kafka();
+    protected String getCrd() {
+        return TestUtils.CRD_KAFKA;
+    }
+
+    @Override
+    protected String getCrdName() {
+        return Kafka.CRD_NAME;
     }
 
     @Override
@@ -45,19 +50,18 @@ public class KafkaCrdOperatorIT extends AbstractCustomResourceOperatorIT<Kuberne
         return "kafka-crd-it-namespace";
     }
 
-    protected Kafka getResource() {
+    @Override
+    protected Kafka getResource(String resourceName) {
         return new KafkaBuilder()
-                .withApiVersion(Kafka.RESOURCE_GROUP + "/" + Kafka.V1BETA1)
                 .withNewMetadata()
-                    .withName(RESOURCE_NAME)
+                    .withName(resourceName)
                     .withNamespace(getNamespace())
                 .endMetadata()
                 .withNewSpec()
                     .withNewKafka()
                         .withReplicas(1)
                         .withNewListeners()
-                            .withNewPlain()
-                            .endPlain()
+                            .addToGenericKafkaListeners(new GenericKafkaListenerBuilder().withName("listener").withPort(9092).withType(KafkaListenerType.INTERNAL).withTls(false).build())
                         .endListeners()
                         .withNewEphemeralStorage()
                         .endEphemeralStorage()
@@ -77,9 +81,9 @@ public class KafkaCrdOperatorIT extends AbstractCustomResourceOperatorIT<Kuberne
     protected Kafka getResourceWithModifications(Kafka resourceInCluster) {
         return new KafkaBuilder(resourceInCluster)
                 .editSpec()
-                .editKafka()
-                .addToConfig("xxx", "yyy")
-                .endKafka()
+                    .editKafka()
+                        .addToConfig("xxx", "yyy")
+                    .endKafka()
                 .endSpec()
                 .build();
 
@@ -89,7 +93,7 @@ public class KafkaCrdOperatorIT extends AbstractCustomResourceOperatorIT<Kuberne
     protected Kafka getResourceWithNewReadyStatus(Kafka resourceInCluster) {
         return new KafkaBuilder(resourceInCluster)
                 .withNewStatus()
-                .withConditions(READY_CONDITION)
+                    .withConditions(READY_CONDITION)
                 .endStatus()
                 .build();
     }

@@ -11,26 +11,26 @@ A Kafka Connect cluster is implemented as a `Deployment` with a configurable num
 
 The deployment uses a YAML file to provide the specification to create a `KafkaConnect` resource.
 
-In this procedure, we use the example file provided with {ProductName}:
+In this procedure, we use the example file provided with Strimzi:
 
-* `examples/kafka-connect/kafka-connect.yaml`
+* `examples/connect/kafka-connect.yaml`
 
-For more information about configuring the `KafkaConnect` resource, see:
-
-* link:{BookURLUsing}#assembly-deployment-configuration-kafka-connect-str[Kafka Connect cluster configuration^]
-* link:{BookURLUsing}#assembly-deployment-configuration-kafka-connect-s2i-str[Kafka Connect cluster configuration with Source2Image support^]
+For information about configuring the `KafkaConnect` resource (or the `KafkaConnectS2I` resource with Source-to-Image (S2I) support),
+see link:{BookURLUsing}#assembly-kafka-connect-str[Kafka Connect cluster configuration^] in the _Using Strimzi_ guide.
 
 .Prerequisites
 
 * xref:deploying-cluster-operator-str[The Cluster Operator must be deployed.]
+* xref:deploying-kafka-cluster-str[Running Kafka cluster.]
 
 .Procedure
 
 . Deploy Kafka Connect to your Kubernetes cluster.
+Use the `examples/connect/kafka-connect.yaml` file to deploy Kafka Connect.
 +
 [source,shell,subs="attributes+"]
 ----
-kubectl apply -f examples/kafka-connect/kafka-connect.yaml
+kubectl apply -f examples/connect/kafka-connect.yaml
 ----
 . Verify that Kafka Connect was successfully deployed:
 +

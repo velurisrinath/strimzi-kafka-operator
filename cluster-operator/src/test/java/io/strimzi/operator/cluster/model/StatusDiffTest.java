@@ -11,7 +11,9 @@ import io.strimzi.api.kafka.model.status.KafkaStatus;
 import io.strimzi.api.kafka.model.status.ListenerAddressBuilder;
 import io.strimzi.api.kafka.model.status.ListenerStatus;
 import io.strimzi.api.kafka.model.status.ListenerStatusBuilder;
-import org.junit.jupiter.api.Test;
+import io.strimzi.operator.common.operator.resource.StatusUtils;
+import io.strimzi.test.annotations.ParallelSuite;
+import io.strimzi.test.annotations.ParallelTest;
 
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
@@ -20,8 +22,9 @@ import java.util.Date;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 
+@ParallelSuite
 public class StatusDiffTest {
-    @Test
+    @ParallelTest
     public void testStatusDiff()    {
         ListenerStatus ls1 = new ListenerStatusBuilder()
                 .withNewType("plain")
@@ -48,13 +51,13 @@ public class StatusDiffTest {
                 .build();
 
         Condition condition1 = new ConditionBuilder()
-                .withNewLastTransitionTime(ModelUtils.formatTimestamp(new Date()))
+                .withNewLastTransitionTime(StatusUtils.iso8601(new Date()))
                 .withNewType("Ready")
                 .withNewStatus("True")
                 .build();
 
         Condition condition2 = new ConditionBuilder()
-                .withNewLastTransitionTime(ModelUtils.formatTimestamp(new Date()))
+                .withNewLastTransitionTime(StatusUtils.iso8601(new Date()))
                 .withNewType("Ready2")
                 .withNewStatus("True")
                 .build();
@@ -108,7 +111,7 @@ public class StatusDiffTest {
         assertThat(diff.isEmpty(), is(false));
     }
 
-    @Test
+    @ParallelTest
     public void testTimestampDiff() throws ParseException {
         ListenerStatus ls1 = new ListenerStatusBuilder()
                 .withNewType("plain")
@@ -127,13 +130,13 @@ public class StatusDiffTest {
                 .build();
 
         Condition condition1 = new ConditionBuilder()
-                .withNewLastTransitionTime(ModelUtils.formatTimestamp(new Date()))
+                .withNewLastTransitionTime(StatusUtils.iso8601(new Date()))
                 .withNewType("Ready")
                 .withNewStatus("True")
                 .build();
 
         Condition condition2 = new ConditionBuilder()
-                .withNewLastTransitionTime(ModelUtils.formatTimestamp(new SimpleDateFormat("yyyy-MM-dd hh:mm:ss").parse("2011-01-01 00:00:00")))
+                .withNewLastTransitionTime(StatusUtils.iso8601(new SimpleDateFormat("yyyy-MM-dd hh:mm:ss").parse("2011-01-01 00:00:00")))
                 .withNewType("Ready")
                 .withNewStatus("True")
                 .build();

@@ -1,5 +1,5 @@
 ---
-apiVersion: "kafka.strimzi.io/v1beta1"
+apiVersion: "kafka.strimzi.io/v1beta2"
 kind: "Kafka"
 metadata:
   name: "strimzi-ephemeral"
@@ -7,10 +7,6 @@ spec:
   kafka:
     replicas: 3
     image: "strimzi/kafka:latest"
-    storage:
-      type: "persistent-claim"
-      size: "500Gi"
-      deleteClaim: false
     listeners:
       plain:
         networkPolicyPeers:
@@ -69,6 +65,11 @@ spec:
         - podSelector:
             matchLabels:
               app: "kafka-producer"
+    config:
+      min.insync.replicas: 3
+    storage:
+      type: "persistent-claim"
+      size: "500Gi"
     authorization:
       type: "simple"
       superUsers:
@@ -79,8 +80,6 @@ spec:
       - "CN=kyle"
       - "CN=sergey"
       - "CN=andryi"
-    config:
-      min.insync.replicas: 3
     brokerRackInitImage: "strimzi/kafka-init:latest"
     tolerations:
     - effect: "NoSchedule"
@@ -105,15 +104,12 @@ spec:
     resources:
       limits:
         memory: "5Gi"
-    metrics:
-      lowercaseOutputName: true
-      rules:
-      - pattern: "kafka.server<type=(.+), name=(.+)PerSec\\w*><>Count"
-        name: "kafka_server_$1_$2_total"
-      - pattern: "kafka.server<type=(.+), name=(.+)PerSec\\w*, topic=(.+)><>Count"
-        name: "kafka_server_$1_$2_total"
-        labels:
-          topic: "$3"
+    metricsConfig:
+      type: "jmxPrometheusExporter"
+      valueFrom:
+        configMapKeyRef:
+          key: "my-key"
+          name: "my-config-map"
   zookeeper:
     replicas: 3
     image: "strimzi/zookeeper:latest"
@@ -142,8 +138,8 @@ spec:
         memory: "512Mi"
   topicOperator:
     watchedNamespace: "my-ns"
-    reconciliationIntervalSeconds: 90
-    zookeeperSessionTimeoutSeconds: 20
+    reconciliationIntervalSeconds: 120
+    zookeeperSessionTimeoutSeconds: 18
     topicMetadataMaxAttempts: 6
   clusterCa:
     generateCertificateAuthority: false

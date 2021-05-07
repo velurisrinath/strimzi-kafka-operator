@@ -1,4 +1,4 @@
-apiVersion: kafka.strimzi.io/v1alpha1
+apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaMirrorMaker2
 metadata:
   name: test-kafka-mirror-maker-2
@@ -35,8 +35,8 @@ spec:
         tasksMax: 2
         config:
           checkpoints.topic.replication.factor: 1
-      # topics is missing
-      groups: my-group
+      # topicsPattern is missing
+      groupsPattern: my-group
     - sourceConnector:
         config:
           replication.factor: 1

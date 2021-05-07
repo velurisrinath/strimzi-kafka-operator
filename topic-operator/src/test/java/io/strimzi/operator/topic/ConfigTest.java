@@ -23,6 +23,7 @@ public class ConfigTest {
         MANDATORY.put(Config.ZOOKEEPER_CONNECT.key, "localhost:2181");
         MANDATORY.put(Config.KAFKA_BOOTSTRAP_SERVERS.key, "localhost:9092");
         MANDATORY.put(Config.NAMESPACE.key, "default");
+        MANDATORY.put(Config.CLIENT_ID.key, "default-client-id");
     }
 
     @Test
@@ -43,7 +44,7 @@ public class ConfigTest {
     public void testDefaultInput() {
         Map<String, String> map = new HashMap<>(MANDATORY);
         Config c = new Config(map);
-        assertThat(c.get(Config.ZOOKEEPER_SESSION_TIMEOUT_MS).intValue(), is(20_000));
+        assertThat(c.get(Config.ZOOKEEPER_SESSION_TIMEOUT_MS).intValue(), is(18_000));
     }
 
     @Test

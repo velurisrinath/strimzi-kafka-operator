@@ -4,14 +4,13 @@
  */
 package io.strimzi.operator.topic;
 
+import io.fabric8.kubernetes.api.model.DeletionPropagation;
 import io.fabric8.kubernetes.api.model.Event;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.Resource;
-import io.strimzi.api.kafka.Crds;
 import io.strimzi.api.kafka.KafkaTopicList;
-import io.strimzi.api.kafka.model.DoneableKafkaTopic;
 import io.strimzi.api.kafka.model.KafkaTopic;
 import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.operator.resource.CrdOperator;
@@ -31,14 +30,14 @@ public class K8sImpl implements K8s {
     private final String namespace;
 
     private final KubernetesClient client;
-    private final CrdOperator<KubernetesClient, KafkaTopic, KafkaTopicList, DoneableKafkaTopic> crdOperator;
+    private final CrdOperator<KubernetesClient, KafkaTopic, KafkaTopicList> crdOperator;
 
     private final Vertx vertx;
 
     public K8sImpl(Vertx vertx, KubernetesClient client, Labels labels, String namespace) {
         this.vertx = vertx;
         this.client = client;
-        this.crdOperator = new CrdOperator<>(vertx, client, KafkaTopic.class, KafkaTopicList.class, DoneableKafkaTopic.class, Crds.kafkaTopic());
+        this.crdOperator = new CrdOperator<>(vertx, client, KafkaTopic.class, KafkaTopicList.class, KafkaTopic.RESOURCE_KIND);
         this.labels = labels;
         this.namespace = namespace;
     }
@@ -90,7 +89,7 @@ public class K8sImpl implements K8s {
         vertx.executeBlocking(future -> {
             try {
                 // Delete the resource by the topic name, because neither ZK nor Kafka know the resource name
-                if (!Boolean.TRUE.equals(operation().inNamespace(namespace).withName(resourceName.toString()).cascading(true).delete())) {
+                if (!Boolean.TRUE.equals(operation().inNamespace(namespace).withName(resourceName.toString()).withPropagationPolicy(DeletionPropagation.FOREGROUND).delete())) {
                     LOGGER.warn("KafkaTopic {} could not be deleted, since it doesn't seem to exist", resourceName.toString());
                     future.complete();
                 } else {
@@ -99,7 +98,7 @@ public class K8sImpl implements K8s {
                         boolean notExists = kafkaTopic == null;
                         LOGGER.debug("KafkaTopic {} deleted {}", resourceName.toString(), notExists);
                         return notExists;
-                    }).setHandler(future);
+                    }).onComplete(future);
                 }
             } catch (Exception e) {
                 future.fail(e);
@@ -108,8 +107,8 @@ public class K8sImpl implements K8s {
         return handler.future();
     }
 
-    private MixedOperation<KafkaTopic, KafkaTopicList, DoneableKafkaTopic, Resource<KafkaTopic, DoneableKafkaTopic>> operation() {
-        return client.customResources(Crds.kafkaTopic(), KafkaTopic.class, KafkaTopicList.class, DoneableKafkaTopic.class);
+    private MixedOperation<KafkaTopic, KafkaTopicList, Resource<KafkaTopic>> operation() {
+        return client.customResources(KafkaTopic.class, KafkaTopicList.class);
     }
 
     @Override
@@ -132,7 +131,7 @@ public class K8sImpl implements K8s {
             try {
                 try {
                     LOGGER.debug("Creating event {}", event);
-                    client.events().inNamespace(namespace).create(event);
+                    client.v1().events().inNamespace(namespace).create(event);
                 } catch (KubernetesClientException e) {
                     LOGGER.error("Error creating event {}", event, e);
                 }

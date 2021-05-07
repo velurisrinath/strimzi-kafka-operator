@@ -4,15 +4,15 @@
  */
 package io.strimzi.operator.common.operator.resource;
 
+import io.fabric8.kubernetes.api.model.DeletionPropagation;
 import io.fabric8.kubernetes.api.model.HasMetadata;
 import io.fabric8.kubernetes.api.model.KubernetesResourceList;
 import io.fabric8.kubernetes.client.KubernetesClient;
-import io.fabric8.kubernetes.client.Watch;
 import io.fabric8.kubernetes.client.Watcher;
+import io.fabric8.kubernetes.client.dsl.FilterWatchListDeletable;
 import io.fabric8.kubernetes.client.dsl.FilterWatchListMultiDeletable;
 import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
 import io.fabric8.kubernetes.client.dsl.Resource;
-import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.model.Labels;
 import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
@@ -24,7 +24,7 @@ import org.apache.logging.log4j.Logger;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.Predicate;
+import java.util.regex.Pattern;
 
 /**
  * Abstract resource creation, for a generic resource type {@code R}.
@@ -33,33 +33,35 @@ import java.util.function.Predicate;
  * @param <C> The type of client used to interact with kubernetes.
  * @param <T> The Kubernetes resource type.
  * @param <L> The list variant of the Kubernetes resource type.
- * @param <D> The doneable variant of the Kubernetes resource type.
  * @param <R> The resource operations.
  */
 public abstract class AbstractNonNamespacedResourceOperator<C extends KubernetesClient, T extends HasMetadata,
-        L extends KubernetesResourceList/*<T>*/, D, R extends Resource<T, D>> {
+        L extends KubernetesResourceList<T>, R extends Resource<T>> {
+
+    protected static final Pattern IGNORABLE_PATHS = Pattern.compile(
+            "^(/metadata/managedFields" +
+                    "|/status)$");
 
     protected final Logger log = LogManager.getLogger(getClass());
     protected final Vertx vertx;
     protected final C client;
     protected final String resourceKind;
-    private final long operationTimeoutMs;
+    protected final ResourceSupport resourceSupport;
 
     /**
      * Constructor.
      * @param vertx The vertx instance.
      * @param client The kubernetes client.
      * @param resourceKind The mind of Kubernetes resource (used for logging).
-     * @param operationTimeoutMs Timeout for operations.
      */
-    public AbstractNonNamespacedResourceOperator(Vertx vertx, C client, String resourceKind, long operationTimeoutMs) {
+    public AbstractNonNamespacedResourceOperator(Vertx vertx, C client, String resourceKind) {
         this.vertx = vertx;
         this.client = client;
         this.resourceKind = resourceKind;
-        this.operationTimeoutMs = operationTimeoutMs;
+        this.resourceSupport = new ResourceSupport(vertx);
     }
 
-    protected abstract NonNamespaceOperation<T, L, D, R> operation();
+    protected abstract NonNamespaceOperation<T, L, R> operation();
 
     /**
      * Asynchronously create or update the given {@code resource} depending on whether it already exists,
@@ -83,7 +85,6 @@ public abstract class AbstractNonNamespacedResourceOperator<C extends Kubernetes
      * @return A future which completes when the resource was reconciled.
      */
     public Future<ReconcileResult<T>> reconcile(String name, T desired) {
-
         if (desired != null && !name.equals(desired.getMetadata().getName())) {
             return Future.failedFuture("Given name " + name + " incompatible with desired name "
                     + desired.getMetadata().getName());
@@ -96,16 +97,16 @@ public abstract class AbstractNonNamespacedResourceOperator<C extends Kubernetes
                 if (desired != null) {
                     if (current == null) {
                         log.debug("{} {} does not exist, creating it", resourceKind, name);
-                        internalCreate(name, desired).setHandler(future);
+                        internalCreate(name, desired).onComplete(future);
                     } else {
                         log.debug("{} {} already exists, patching it", resourceKind, name);
-                        internalPatch(name, current, desired).setHandler(future);
+                        internalPatch(name, current, desired).onComplete(future);
                     }
                 } else {
                     if (current != null) {
                         // Deletion is desired
                         log.debug("{} {} exist, deleting it", resourceKind, name);
-                        internalDelete(name).setHandler(future);
+                        internalDelete(name).onComplete(future);
                     } else {
                         log.debug("{} {} does not exist, noop", resourceKind, name);
                         future.complete(ReconcileResult.noop(null));
@@ -119,16 +120,23 @@ public abstract class AbstractNonNamespacedResourceOperator<C extends Kubernetes
         return promise.future();
     }
 
-
+    protected long deleteTimeoutMs() {
+        return ResourceSupport.DEFAULT_TIMEOUT_MS;
+    }
 
     /**
-     * Asynchronously deletes the resource with the given {@code name}.
+     * Asynchronously deletes the resource with the given {@code name},
+     * returning a Future which completes once the resource
+     * is observed to have been deleted.
      * @param name The resource to be deleted.
      * @return A future which will be completed on the context thread
      * once the resource has been deleted.
      */
     private Future<ReconcileResult<T>> internalDelete(String name) {
-        Future<ReconcileResult<T>> watchForDeleteFuture = new ResourceSupport(vertx).selfClosingWatch(operation().withName(name),
+        R resourceOp = operation().withName(name);
+        Future<ReconcileResult<T>> watchForDeleteFuture = resourceSupport.selfClosingWatch(resourceOp,
+                deleteTimeoutMs(),
+            "observe deletion of " + resourceKind + " " + name,
             (action, resource) -> {
                 if (action == Watcher.Action.DELETED) {
                     log.debug("{} {} has been deleted", resourceKind, name);
@@ -136,31 +144,42 @@ public abstract class AbstractNonNamespacedResourceOperator<C extends Kubernetes
                 } else {
                     return null;
                 }
-            }, operationTimeoutMs);
-
-        Future<Void> deleteFuture = deleteAsync(name);
-
+            });
+        Future<Void> deleteFuture = resourceSupport.deleteAsync(resourceOp);
         return CompositeFuture.join(watchForDeleteFuture, deleteFuture).map(ReconcileResult.deleted());
     }
 
-    private Future<Void> deleteAsync(String name) {
-        Promise<Void> deletePromise = Promise.promise();
-        vertx.executeBlocking(
-            f -> {
-                try {
-                    Boolean delete = operation().withName(name).withGracePeriod(-1L).delete();
-                    if (!Boolean.TRUE.equals(delete)) {
-                        f.fail(new RuntimeException(resourceKind + "/" + name + " could not be deleted (returned " + delete + ")"));
-                    } else {
-                        f.complete();
-                    }
-                } catch (Throwable t) {
-                    f.fail(t);
-                }
-            },
-            true,
-            deletePromise);
-        return deletePromise.future();
+    /**
+     * @return  Returns the Pattern for matching paths which can be ignored in the resource diff
+     */
+    protected Pattern ignorablePaths() {
+        return IGNORABLE_PATHS;
+    }
+
+    /**
+     * Returns the diff of the current and desired resources
+     *
+     * @param resourceName  Name of the resource used for logging
+     * @param current       Current resource
+     * @param desired       Desired resource
+     *
+     * @return  The ResourceDiff instance
+     */
+    protected ResourceDiff<T> diff(String resourceName, T current, T desired)  {
+        return new ResourceDiff<>(resourceKind, resourceName, current, desired, ignorablePaths());
+    }
+
+    /**
+     * Checks whether the current and desired resources differ and need to be patched in the Kubernetes API server.
+     *
+     * @param name      Name of the resource used for logging
+     * @param current   Current resource
+     * @param desired   desired resource
+     *
+     * @return          True if the resources differ and need patching
+     */
+    protected boolean needsPatching(String name, T current, T desired)   {
+        return !diff(name, current, desired).isEmpty();
     }
 
     /**
@@ -172,14 +191,19 @@ public abstract class AbstractNonNamespacedResourceOperator<C extends Kubernetes
     }
 
     protected Future<ReconcileResult<T>> internalPatch(String name, T current, T desired, boolean cascading) {
-        try {
-            T result = operation().withName(name).cascading(cascading).patch(desired);
-            log.debug("{} {} has been patched", resourceKind, name);
-            return Future.succeededFuture(wasChanged(current, result) ?
-                    ReconcileResult.patched(result) : ReconcileResult.noop(result));
-        } catch (Exception e) {
-            log.debug("Caught exception while patching {} {}", resourceKind, name, e);
-            return Future.failedFuture(e);
+        if (needsPatching(name, current, desired))  {
+            try {
+                T result = operation().withName(name).withPropagationPolicy(cascading ? DeletionPropagation.FOREGROUND : DeletionPropagation.ORPHAN).patch(desired);
+                log.debug("{} {} has been patched", resourceKind, name);
+                return Future.succeededFuture(wasChanged(current, result) ?
+                        ReconcileResult.patched(result) : ReconcileResult.noop(result));
+            } catch (Exception e) {
+                log.debug("Caught exception while patching {} {}", resourceKind, name, e);
+                return Future.failedFuture(e);
+            }
+        } else {
+            log.debug("{} {} did not changed and doesn't need patching", resourceKind, name);
+            return Future.succeededFuture(ReconcileResult.noop(current));
         }
     }
 
@@ -198,7 +222,6 @@ public abstract class AbstractNonNamespacedResourceOperator<C extends Kubernetes
      * Creates a resource with the name with the given desired state
      * and completes the given future accordingly.
      */
-    @SuppressWarnings("unchecked")
     protected Future<ReconcileResult<T>> internalCreate(String name, T desired) {
         try {
             ReconcileResult<T> result = ReconcileResult.created(operation().withName(name).create(desired));
@@ -216,6 +239,9 @@ public abstract class AbstractNonNamespacedResourceOperator<C extends Kubernetes
      * @return The resource, or null if it doesn't exist.
      */
     public T get(String name) {
+        if (name == null || name.isEmpty()) {
+            throw new IllegalArgumentException(resourceKind + " with an empty name cannot be configured. Please provide a name.");
+        }
         return operation().withName(name).get();
     }
 
@@ -225,14 +251,10 @@ public abstract class AbstractNonNamespacedResourceOperator<C extends Kubernetes
      * @return A Future for the result.
      */
     public Future<T> getAsync(String name) {
-        Promise<T> result = Promise.promise();
-        vertx.createSharedWorkerExecutor("kubernetes-ops-tool").executeBlocking(
-            future -> {
-                T resource = get(name);
-                future.complete(resource);
-            }, true, result
-        );
-        return result.future();
+        if (name == null || name.isEmpty()) {
+            throw new IllegalArgumentException(resourceKind + " with an empty name cannot be configured. Please provide a name.");
+        }
+        return resourceSupport.getAsync(operation().withName(name));
     }
 
     /**
@@ -241,7 +263,7 @@ public abstract class AbstractNonNamespacedResourceOperator<C extends Kubernetes
      * @return A list of matching resources.
      */
     public List<T> list(Labels selector) {
-        return listInAnyNamespace(selector);
+        return listOperation(selector).list().getItems();
     }
 
     /**
@@ -250,49 +272,17 @@ public abstract class AbstractNonNamespacedResourceOperator<C extends Kubernetes
      * @return A list of matching resources.
      */
     public Future<List<T>> listAsync(Labels selector) {
-        Promise<List<T>> result = Promise.promise();
-        vertx.createSharedWorkerExecutor("kubernetes-ops-tool").executeBlocking(
-            future -> {
-                List<T> resource = list(selector);
-                future.complete(resource);
-            }, true, result
-        );
-        return result.future();
+        return resourceSupport.listAsync(listOperation(selector));
     }
 
-    @SuppressWarnings("unchecked") // due to L extends KubernetesResourceList/*<T>*/
-    protected List<T> listInAnyNamespace(Labels selector) {
-        FilterWatchListMultiDeletable<T, L, Boolean, Watch, Watcher<T>> operation = operation();
+    protected FilterWatchListDeletable<T, L> listOperation(Labels selector) {
+        FilterWatchListMultiDeletable<T, L> operation = operation();
 
         if (selector != null) {
             Map<String, String> labels = selector.toMap();
-            return operation.withLabels(labels)
-                    .list()
-                    .getItems();
+            return operation.withLabels(labels);
         } else {
-            return operation
-                    .list()
-                    .getItems();
+            return operation;
         }
-    }
-
-    /**
-     * Returns a future that completes when the resource identified by the given {@code name}
-     * is ready.
-     *
-     * @param name The resource name.
-     * @param logState The state we are waiting for use in log messages
-     * @param pollIntervalMs The poll interval in milliseconds.
-     * @param timeoutMs The timeout, in milliseconds.
-     * @param predicate The predicate.
-     * @return a future that completes when the resource identified by the given {@code name} is ready.
-     */
-    public Future<Void> waitFor(String name, String logState, long pollIntervalMs, final long timeoutMs, Predicate<String> predicate) {
-        return Util.waitFor(vertx,
-            String.format("%s resource %s", resourceKind, name),
-            logState,
-            pollIntervalMs,
-            timeoutMs,
-            () -> predicate.test(name));
     }
 }

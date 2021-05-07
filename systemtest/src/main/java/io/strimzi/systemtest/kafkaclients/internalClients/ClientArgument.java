@@ -11,6 +11,8 @@ public enum ClientArgument {
     // Common
     TOPIC("--topic"),
     VERBOSE("--verbose"),
+    GROUP("--group"),
+    DESCRIBE("--describe"),
 
     // Consumer
     CONSUMER_CONFIG("--consumer.config"),
@@ -23,6 +25,7 @@ public enum ClientArgument {
     ASSIGMENT_STRATEGY("--assignment-strategy"),
 
     // Producer
+    BOOTSTRAP_SERVER("--bootstrap-server"),
     BROKER_LIST("--broker-list"),
     PRODUCER_CONFIG("--producer.config"),
     ACKS("--acks"),

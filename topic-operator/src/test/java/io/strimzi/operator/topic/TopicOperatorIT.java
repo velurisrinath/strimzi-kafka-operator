@@ -4,27 +4,32 @@
  */
 package io.strimzi.operator.topic;
 
-import io.fabric8.kubernetes.api.model.ConfigMapBuilder;
-import io.fabric8.kubernetes.api.model.ObjectMeta;
-import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
-import io.fabric8.kubernetes.api.model.OwnerReference;
-import io.fabric8.kubernetes.api.model.OwnerReferenceBuilder;
-import io.fabric8.kubernetes.client.KubernetesClientException;
-import io.strimzi.api.kafka.model.KafkaTopic;
-import io.strimzi.api.kafka.model.KafkaTopicBuilder;
-import kafka.server.KafkaConfig$;
-import org.apache.kafka.clients.admin.CreateTopicsResult;
-import org.apache.kafka.clients.admin.NewTopic;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.junit.jupiter.api.Test;
-
+import java.net.HttpURLConnection;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
+
+import io.fabric8.kubernetes.api.model.ConfigMapBuilder;
+import io.fabric8.kubernetes.api.model.ObjectMeta;
+import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
+import io.fabric8.kubernetes.api.model.OwnerReference;
+import io.fabric8.kubernetes.api.model.OwnerReferenceBuilder;
+import io.fabric8.kubernetes.api.model.Status;
+import io.fabric8.kubernetes.api.model.StatusBuilder;
+import io.fabric8.kubernetes.client.KubernetesClientException;
+import io.fabric8.kubernetes.client.WatcherException;
+import io.strimzi.api.kafka.model.KafkaTopic;
+import io.strimzi.api.kafka.model.KafkaTopicBuilder;
+import kafka.server.KafkaConfig$;
+import org.apache.kafka.clients.admin.CreateTopicsResult;
+import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.common.errors.InvalidRequestException;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.junit.jupiter.api.Test;
 
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.singletonList;
@@ -53,6 +58,11 @@ public class TopicOperatorIT extends TopicOperatorBaseIT {
     @Test
     public void testTopicAdded() throws Exception {
         createTopic("test-topic-added");
+    }
+
+    @Test
+    public void testTopicAddedWithReplicasAndPartitions() throws Exception {
+        createTopic("test-topic-added-rp", 1, (short) 1);
     }
 
     @Test
@@ -86,6 +96,43 @@ public class TopicOperatorIT extends TopicOperatorBaseIT {
     }
 
     @Test
+    public void testTopicNumPartitionsDecreased() throws Exception {
+        String topicName = "topic-partitions-decreased-in-kube";
+        String resourceName = createTopic(topicName, new NewTopic(topicName, 2, (short) 1));
+        KafkaTopic changedTopic = new KafkaTopicBuilder(operation().inNamespace(NAMESPACE).withName(resourceName).get())
+                .editOrNewSpec().withPartitions(1).endSpec().build();
+        KafkaTopic replaced = operation().inNamespace(NAMESPACE).withName(resourceName).replace(changedTopic);
+        assertStatusNotReady(topicName, PartitionDecreaseException.class,
+                "Number of partitions cannot be decreased");
+        Long generation = operation().inNamespace(NAMESPACE).withName(resourceName).get().getMetadata().getGeneration();
+        // Now modify Kafka-side to cause another reconciliation: We want the same status.
+        alterTopicConfigInKafka(topicName, "compression.type", value -> "snappy".equals(value) ? "lz4" : "snappy");
+        // Wait for a periodic reconciliation
+        Thread.sleep(30_000);
+        assertStatusNotReady(topicName, PartitionDecreaseException.class,
+                "Number of partitions cannot be decreased");
+    }
+
+    @Test
+    public void testInvalidConfig() throws Exception {
+        String topicName = "topic-invalid-config";
+        String expectedMessage = "Invalid config value for resource ConfigResource(type=TOPIC, name='" + topicName + "'): Invalid value x for configuration min.insync.replicas: Not a number of type INT";
+
+        String resourceName = createTopic(topicName, new NewTopic(topicName, 2, (short) 1));
+        KafkaTopic changedTopic = new KafkaTopicBuilder(operation().inNamespace(NAMESPACE).withName(resourceName).get())
+                .editOrNewSpec().addToConfig("min.insync.replicas", "x").endSpec().build();
+        KafkaTopic replaced = operation().inNamespace(NAMESPACE).withName(resourceName).replace(changedTopic);
+        assertStatusNotReady(topicName, InvalidRequestException.class,
+                expectedMessage);
+        // Now modify Kafka-side to cause another reconciliation: We want the same status.
+        alterTopicConfigInKafka(topicName, "compression.type", value -> "snappy".equals(value) ? "lz4" : "snappy");
+        // Wait for a periodic reconciliation
+        Thread.sleep(30_000);
+        assertStatusNotReady(topicName, InvalidRequestException.class,
+                expectedMessage);
+    }
+
+    @Test
     public void testKafkaTopicAdded() throws InterruptedException, ExecutionException, TimeoutException {
         String topicName = "test-kafkatopic-created";
         createKafkaTopicResource(topicName);
@@ -102,6 +149,7 @@ public class TopicOperatorIT extends TopicOperatorBaseIT {
         assertStatusNotReady(topicName, expectedMessage);
     }
 
+    @Test
     public void testKafkaTopicAddedWithMoreReplicasThanBrokers() throws InterruptedException, ExecutionException, TimeoutException {
         createKafkaTopicResourceError("test-resource-created-with-more-replicas-than-brokers", emptyMap(), 42, "Replication factor: 42 larger than available brokers: 1.");
     }
@@ -245,6 +293,73 @@ public class TopicOperatorIT extends TopicOperatorBaseIT {
         // Wait for the topic to be created
         waitForTopicInKafka(topicName);
         assertStatusReady(topicName);
+    }
+
+    @Test
+    public void testRecreateTopicWatcher() throws InterruptedException, ExecutionException, TimeoutException {
+        String topicName = "test-reconcile";
+        String topicName2 = "test-reconcile-2";
+
+        Topic topic = new Topic.Builder(topicName, 1, (short) 1, emptyMap()).build();
+        KafkaTopic topicResource = TopicSerialization.toTopicResource(topic, labels);
+        String resourceName = topicResource.getMetadata().getName();
+
+        operation().inNamespace(NAMESPACE).create(topicResource);
+
+        // Wait for the resource to be created
+        waitFor(() -> {
+            KafkaTopic createdResource = operation().inNamespace(NAMESPACE).withName(resourceName).get();
+            LOGGER.info("Polled kafkatopic {} waiting for creation", resourceName);
+
+            // modify resource
+            if (createdResource != null) {
+                createdResource.getSpec().setPartitions(2);
+                operation().inNamespace(NAMESPACE).withName(resourceName).patch(createdResource);
+            }
+
+            return createdResource != null;
+        }, "Expected the kafkatopic to have been created by now");
+
+        Status status = new StatusBuilder()
+                .withStatus("pokazene")
+                .withCode(HttpURLConnection.HTTP_GONE)
+                .withNewMessage("pokazene")
+                .build();
+        WatcherException e = new WatcherException(status.toString());
+        LOGGER.info("stopping TW");
+        session.topicWatch.close();
+        session.topicsWatcher.stop();
+        session.watcher.onClose(e);
+
+        // trigger an immediate reconcile, while topic operator is dealing with resource modification
+        session.topicOperator.reconcileAllTopics("periodic");
+
+        // Wait for the topic to be created
+        waitForTopicInKafka(topicName);
+        assertStatusReady(topicName);
+
+        Topic topic2 = new Topic.Builder(topicName2, 1, (short) 1, emptyMap()).build();
+        KafkaTopic topicResource2 = TopicSerialization.toTopicResource(topic2, labels);
+        String resourceName2 = topicResource2.getMetadata().getName();
+
+        operation().inNamespace(NAMESPACE).create(topicResource2);
+
+        // Wait for the resource to be created
+        waitFor(() -> {
+            KafkaTopic createdResource = operation().inNamespace(NAMESPACE).withName(resourceName2).get();
+            LOGGER.info("Polled kafkatopic {} waiting for creation", resourceName2);
+
+            // modify resource
+            if (createdResource != null) {
+                createdResource.getSpec().setPartitions(2);
+                operation().inNamespace(NAMESPACE).withName(resourceName2).patch(createdResource);
+            }
+            return createdResource != null;
+        }, "Expected the kafkatopic to have been created by now");
+
+        // I assume the test should fail because of topic `test-reconcile-2` should not exist i
+        waitForTopicInKafka(topicName2);
+        assertStatusReady(topicName2);
     }
 
     // TODO: What happens if we create and then change labels to the resource predicate isn't matched any more

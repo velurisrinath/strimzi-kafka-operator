@@ -11,31 +11,11 @@ The `config` property in `Kafka.spec.cruiseControl` contains configuration optio
 * Number
 * Boolean
 
-NOTE: Strings that look like JSON or YAML will need to be explicitly quoted.
-
-You can specify and configure all the options listed in the "Configurations" section of the {CruiseControlConfigDocs}, apart from those managed directly by {ProductName}.
-Specifically, you *cannot* modify configuration options with keys equal to or starting with one of the following strings:
-
-* `bootstrap.servers`
-* `zookeeper.`
-* `ssl.`
-* `security.`
-* `failed.brokers.zk.path`
-* `webserver.http.port`
-* `webserver.http.address`
-* `webserver.api.urlprefix`
-* `metric.reporter.sampler.bootstrap.servers`
-* `metric.reporter.topic`
-* `metric.reporter.topic.pattern`
-* `partition.metric.sample.store.topic`
-* `broker.metric.sample.store.topic`
-* `capacity.config.file`
-* `skip.sample.store.topic.rack.awareness.check`
-* `cruise.control.metrics.topic`
-* `sasl.`
+You can specify and configure all the options listed in the "Configurations" section of the {CruiseControlConfigDocs}, apart from those managed directly by Strimzi.
+Specifically, you *cannot* modify configuration options with keys equal to or starting with one of the keys mentioned xref:type-CruiseControlSpec-reference[here].
 
 If restricted options are specified, they are ignored and a warning message is printed to the Cluster Operator log file.
-All supported options are passed to Cruise Control.
+All the supported options are passed to Cruise Control.
 
 .An example Cruise Control configuration
 [source,yaml,subs="attributes+"]
@@ -57,23 +37,64 @@ spec:
       send.buffer.bytes: 131072
     # ...
 ----
+
+[[cors-configuration]]
+[discrete]
+== Cross-Origin Resource Sharing configuration
+
+Cross-Origin Resource Sharing (CORS) allows you to specify allowed methods and originating URLs for accessing REST APIs.
+
+By default, CORS is disabled for the Cruise Control REST API.
+When enabled, only `GET` requests for read-only access to the Kafka cluster state are allowed.
+This means that external applications, which are running in different origins than the Strimzi components, cannot make `POST` requests to the Cruise Control API.
+However, those applications can make `GET` requests to access read-only information about the Kafka cluster, such as the current cluster load or the most recent optimization proposal.
+
+.Enabling CORS for Cruise Control
+
+You enable and configure CORS in `Kafka.spec.cruiseControl.config`.
+[source,yaml,subs="attributes+"]
+----
+apiVersion: {KafkaApiVersion}
+kind: Kafka
+metadata:
+  name: my-cluster
+spec:
+  # ...
+  cruiseControl:
+    # ...
+    config:
+      webserver.http.cors.enabled: true
+      webserver.http.cors.origin: "*"
+      webserver.http.cors.exposeheaders: "User-Task-ID,Content-Type"
+    # ...
+----
+
+For more information, see {CruiseControlApiDocs}.
+
+[[capacity-configuration]]
+[discrete]
 == Capacity configuration
 
-Cruise Control uses _capacity limits_ to determine if optimization goals for broker resources are being broken.
-An optimization will fail if a goal is broken, preventing the optimization from being used to generate an optimization proposal for balanced partition assignments.
-For example, an optimization that would cause a broker to exceed its CPU capacity would not be used if the `CpuCapacityGoal` is set as a hard goal.
+Cruise Control uses _capacity limits_ to determine if optimization goals for resource distribution are being broken. 
+There are four goals of this type:
 
-You specify capacity limits for broker resources in the `brokerCapacity` property in `Kafka.spec.cruiseControl` .
-Capacity limits can be set for the following broker resources in the described units:
+* `DiskUsageDistributionGoal`            - Disk utilization distribution
+* `CpuUsageDistributionGoal`             - CPU utilization distribution    
+* `NetworkInboundUsageDistributionGoal`  - Network inbound utilization distribution
+* `NetworkOutboundUsageDistributionGoal` - Network outbound utilization distribution
 
-* `disk`            - Disk storage in bytes
-* `cpuUtilization`  - CPU utilization as a percent (0-100)
-* `inboundNetwork`  - Inbound network throughput in bytes per second
-* `outboundNetwork` - Outbound network throughput in bytes per second
+You specify capacity limits for Kafka broker resources in the `brokerCapacity` property in `Kafka.spec.cruiseControl` . 
+They are enabled by default and you can change their default values. 
+Capacity limits can be set for the following broker resources, using the standard Kubernetes byte units (K, M, G and T) or their bibyte (power of two) equivalents (Ki, Mi, Gi and Ti):
 
-Because {ProductName} Kafka brokers are homogeneous, Cruise Control applies the same capacity limits to every broker it is monitoring.
+* `disk`            - Disk storage per broker (Default: 100000Mi)
+* `cpuUtilization`  - CPU utilization as a percentage (Default: 100)
+* `inboundNetwork`  - Inbound network throughput in byte units per second (Default: 10000KiB/s)
+* `outboundNetwork` - Outbound network throughput in byte units per second (Default: 10000KiB/s)
 
-.An example Cruise Control brokerCapacity configuration
+Because Strimzi Kafka brokers are homogeneous, Cruise Control applies the same capacity limits to every broker it is monitoring.
+
+.An example Cruise Control brokerCapacity configuration using bibyte units
 [source,yaml,subs="attributes+"]
 ----
 apiVersion: {KafkaApiVersion}
@@ -85,30 +106,30 @@ spec:
   cruiseControl:
     # ...
     brokerCapacity:
-      disk: 100G
+      disk: 100Gi
       cpuUtilization: 100
-      inboundNetwork: 10000KB/s
-      outboundNetwork: 10000KB/s
+      inboundNetwork: 10000KiB/s
+      outboundNetwork: 10000KiB/s
     # ...
 ----
-
 
 .Additional resources
 For more information, refer to the xref:type-BrokerCapacity-reference[].
 
+[[logging-configuration]]
+[discrete]
 == Logging configuration
 
 Cruise Control has its own configurable logger:
 
-* `cruisecontrol.root.logger`
+* `rootLogger.level`
 
-Cruise Control uses the Apache `log4j` logger implementation.
+Cruise Control uses the Apache `log4j 2` logger implementation.
 
 Use the `logging` property to configure loggers and logger levels.
 
 You can set the log levels by specifying the logger and level directly (inline) or use a custom (external) ConfigMap.
-If a ConfigMap is used, you set `logging.name` property to the name of the ConfigMap containing the external logging configuration. Inside the ConfigMap, the logging configuration is described using `log4j.properties`.
-
+If a ConfigMap is used, you set `logging.valueFrom.configMapKeyRef.name` property to the name of the ConfigMap containing the external logging configuration. Inside the ConfigMap, the logging configuration is described using `log4j.properties`. Both `logging.valueFrom.configMapKeyRef.name` and `logging.valueFrom.configMapKeyRef.key` properties are mandatory. A ConfigMap using the exact logging configuration specified is created with the custom resource when the Cluster Operator is running, then recreated after each reconciliation. If you do not specify a custom ConfigMap, default logging settings are used. If a specific logger value is not set, upper-level logger settings are inherited for that logger.
 Here we see examples of `inline` and `external` logging.
 
 .Inline logging
@@ -116,13 +137,14 @@ Here we see examples of `inline` and `external` logging.
 ----
 apiVersion: {KafkaApiVersion}
 kind: Kafka
+# ...
 spec:
   cruiseControl:
     # ...
     logging:
       type: inline
       loggers:
-        cruisecontrol.root.logger: "INFO"
+        rootLogger.level: "INFO"
     # ...
 ----
 
@@ -131,11 +153,15 @@ spec:
 ----
 apiVersion: {KafkaApiVersion}
 kind: Kafka
+# ...
 spec:
   cruiseControl:
     # ...
     logging:
       type: external
-      name: customConfigMap
+      valueFrom:
+        configMapKeyRef:
+          name: customConfigMap
+          key: cruise-control-log4j.properties
     # ...
 ----

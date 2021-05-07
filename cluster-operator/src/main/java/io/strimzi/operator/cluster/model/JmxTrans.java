@@ -79,7 +79,7 @@ public class JmxTrans extends AbstractModel {
     /**
      * Constructor
      *
-     * @param resource Kubernetes/OpenShift resource with metadata containing the namespace and cluster name
+     * @param resource Kubernetes resource with metadata containing the namespace and cluster name
      */
     protected JmxTrans(HasMetadata resource) {
         super(resource, APPLICATION_NAME);
@@ -123,7 +123,7 @@ public class JmxTrans extends AbstractModel {
 
             String image = spec.getImage();
             if (image == null) {
-                image = System.getenv().getOrDefault(STRIMZI_DEFAULT_JMXTRANS_IMAGE, "strimzi/jmxtrans:latest");
+                image = System.getenv().getOrDefault(STRIMZI_DEFAULT_JMXTRANS_IMAGE, "quay.io/strimzi/jmxtrans:latest");
             }
             result.setImage(image);
 
@@ -211,7 +211,7 @@ public class JmxTrans extends AbstractModel {
      * @throws JsonProcessingException when JmxTrans config can't be created properly
      */
     public ConfigMap generateJmxTransConfigMap(JmxTransSpec spec, int numOfBrokers) throws JsonProcessingException {
-        Map<String, String> data = new HashMap<>();
+        Map<String, String> data = new HashMap<>(1);
         String jmxConfig = generateJMXConfig(spec, numOfBrokers);
         data.put(JMXTRANS_CONFIGMAP_KEY, jmxConfig);
         configMapName = jmxTransConfigName(clusterName);
@@ -219,15 +219,19 @@ public class JmxTrans extends AbstractModel {
     }
 
     public List<Volume> getVolumes() {
-        List<Volume> volumes = new ArrayList<>();
+        List<Volume> volumes = new ArrayList<>(3);
+
+        volumes.add(createTempDirVolume());
         volumes.add(VolumeUtils.createConfigMapVolume(JMXTRANS_VOLUME_NAME, configMapName));
         volumes.add(VolumeUtils.createConfigMapVolume(logAndMetricsConfigVolumeName, KafkaCluster.metricAndLogConfigsName(clusterName)));
+
         return volumes;
     }
 
     private List<VolumeMount> getVolumeMounts() {
-        List<VolumeMount> volumeMountList = new ArrayList<>();
+        List<VolumeMount> volumeMountList = new ArrayList<>(3);
 
+        volumeMountList.add(createTempDirVolumeMount());
         volumeMountList.add(VolumeUtils.createVolumeMount(logAndMetricsConfigVolumeName, logAndMetricsConfigMountPath));
         volumeMountList.add(VolumeUtils.createVolumeMount(JMXTRANS_VOLUME_NAME, JMX_FILE_PATH));
         return volumeMountList;
@@ -235,7 +239,7 @@ public class JmxTrans extends AbstractModel {
 
     @Override
     protected List<Container> getContainers(ImagePullPolicy imagePullPolicy) {
-        List<Container> containers = new ArrayList<>();
+        List<Container> containers = new ArrayList<>(1);
         Container container = new ContainerBuilder()
                 .withName(name)
                 .withImage(getImage())
@@ -261,6 +265,9 @@ public class JmxTrans extends AbstractModel {
             varList.add(buildEnvVarFromSecret(KafkaCluster.ENV_VAR_KAFKA_JMX_PASSWORD, KafkaCluster.jmxSecretName(cluster), KafkaCluster.SECRET_JMX_PASSWORD_KEY));
         }
         varList.add(buildEnvVar(ENV_VAR_JMXTRANS_LOGGING_LEVEL, loggingLevel));
+
+        // Add shared environment variables used for all containers
+        varList.addAll(getRequiredEnvVars());
 
         addContainerEnvsToExistingEnvs(varList, templateContainerEnvVars);
 
@@ -312,7 +319,7 @@ public class JmxTrans extends AbstractModel {
         String internalBootstrapServiceName = KafkaCluster.headlessServiceName(clusterName);
         String metricsPortValue = String.valueOf(KafkaCluster.JMX_PORT);
         kafkaJmxMetricsReadinessProbe = kafkaJmxMetricsReadinessProbe == null ? DEFAULT_JMX_TRANS_PROBE : kafkaJmxMetricsReadinessProbe;
-        return ModelUtils.createExecProbe(Arrays.asList("/opt/jmx/jmxtrans_readiness_check.sh", internalBootstrapServiceName, metricsPortValue), kafkaJmxMetricsReadinessProbe);
+        return ProbeGenerator.execProbe(kafkaJmxMetricsReadinessProbe, Arrays.asList("/opt/jmx/jmxtrans_readiness_check.sh", internalBootstrapServiceName, metricsPortValue));
     }
 
     private JmxTransServer convertSpecToServers(JmxTransSpec spec, String brokerServiceName) {

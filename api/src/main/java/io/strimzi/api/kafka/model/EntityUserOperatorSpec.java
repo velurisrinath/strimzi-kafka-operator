@@ -8,6 +8,8 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import io.fabric8.kubernetes.api.model.ResourceRequirements;
 import io.strimzi.crdgenerator.annotations.Description;
+import io.strimzi.crdgenerator.annotations.DescriptionFile;
+import io.strimzi.crdgenerator.annotations.KubeLink;
 import io.strimzi.crdgenerator.annotations.Minimum;
 import io.sundr.builder.annotations.Buildable;
 import lombok.EqualsAndHashCode;
@@ -19,14 +21,15 @@ import java.util.Map;
 /**
  * Representation of the User Operator.
  */
+@DescriptionFile
 @Buildable(
         editableEnabled = false,
         builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
-@JsonInclude(JsonInclude.Include.NON_NULL)
+@JsonInclude(JsonInclude.Include.NON_DEFAULT)
 @JsonPropertyOrder({"watchedNamespace", "image",
         "reconciliationIntervalSeconds", "zookeeperSessionTimeoutSeconds",
-        "livenessProbe", "readinessProbe",
+        "secretPrefix", "livenessProbe", "readinessProbe",
         "resources", "logging", "jvmOptions"})
 @EqualsAndHashCode
 public class EntityUserOperatorSpec implements UnknownPropertyPreserving, Serializable {
@@ -38,10 +41,12 @@ public class EntityUserOperatorSpec implements UnknownPropertyPreserving, Serial
     public static final int DEFAULT_ZOOKEEPER_PORT = 2181;
     public static final int DEFAULT_BOOTSTRAP_SERVERS_PORT = 9091;
     public static final long DEFAULT_FULL_RECONCILIATION_INTERVAL_SECONDS = 120;
-    public static final long DEFAULT_ZOOKEEPER_SESSION_TIMEOUT_SECONDS = 6;
+    public static final long DEFAULT_ZOOKEEPER_SESSION_TIMEOUT_SECONDS = 18;
+    public static final String DEFAULT_SECRET_PREFIX = "";
 
     private String watchedNamespace;
     private String image;
+    private String secretPrefix;
     private long reconciliationIntervalSeconds = DEFAULT_FULL_RECONCILIATION_INTERVAL_SECONDS;
     private long zookeeperSessionTimeoutSeconds = DEFAULT_ZOOKEEPER_SESSION_TIMEOUT_SECONDS;
     private Probe livenessProbe;
@@ -71,6 +76,7 @@ public class EntityUserOperatorSpec implements UnknownPropertyPreserving, Serial
 
     @Description("Interval between periodic reconciliations.")
     @Minimum(0)
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
     public long getReconciliationIntervalSeconds() {
         return reconciliationIntervalSeconds;
     }
@@ -81,6 +87,7 @@ public class EntityUserOperatorSpec implements UnknownPropertyPreserving, Serial
 
     @Description("Timeout for the ZooKeeper session")
     @Minimum(0)
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
     public long getZookeeperSessionTimeoutSeconds() {
         return zookeeperSessionTimeoutSeconds;
     }
@@ -90,6 +97,7 @@ public class EntityUserOperatorSpec implements UnknownPropertyPreserving, Serial
     }
 
     @Description("CPU and memory resources to reserve.")
+    @KubeLink(group = "core", version = "v1", kind = "resourcerequirements")
     public ResourceRequirements getResources() {
         return resources;
     }
@@ -146,5 +154,15 @@ public class EntityUserOperatorSpec implements UnknownPropertyPreserving, Serial
 
     public void setJvmOptions(JvmOptions jvmOptions) {
         this.jvmOptions = jvmOptions;
+    }
+
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    @Description("The prefix that will be added to the KafkaUser name to be used as the Secret name.")
+    public String getSecretPrefix() {
+        return secretPrefix;
+    }
+
+    public void setSecretPrefix(String secretPrefix) {
+        this.secretPrefix = secretPrefix;
     }
 }

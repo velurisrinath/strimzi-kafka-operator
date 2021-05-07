@@ -20,33 +20,51 @@ public class TracingUtils {
 
     private static final String JAEGER_QUERY_SERVICE = "my-jaeger-query";
     private static final String JAEGER_QUERY_SERVICE_ENDPOINT = "/jaeger/api/services";
-    private static final String JAEGER_QUERY_SERVICE_TRACES_ENDPOINT = "/jaeger/api/traces?service=";
+    private static final String JAEGER_QUERY_SERVICE_TRACES_ENDPOINT = "/jaeger/api/traces";
+    private static final String JAEGER_QUERY_SERVICE_PARAM_SERVICE = "?service=";
+    private static final String JAEGER_QUERY_SERVICE_PARAM_OPERATION = "&operation=";
     private static final int JAEGER_QUERY_PORT = 16686;
 
     private TracingUtils() {}
 
-    public static void verify(String jaegerServiceName, String clientPodName) {
-        verifyThatServiceIsPresent(jaegerServiceName, clientPodName);
-        verifyThatServiceTracesArePresent(jaegerServiceName, clientPodName);
+    public static void verify(String componentJaegerServiceName, String clientPodName, String jaegerServiceName) {
+        verify(componentJaegerServiceName, clientPodName, null, jaegerServiceName);
     }
 
-    private static void verifyThatServiceIsPresent(String jaegerServiceName, String clientPodName) {
-        TestUtils.waitFor("Service" + jaegerServiceName + " is present", Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_TIMEOUT, () -> {
-            JsonObject jaegerServices = new JsonObject(cmdKubeClient().execInPod(clientPodName, "/bin/bash", "-c", "curl " + JAEGER_QUERY_SERVICE + ":" + JAEGER_QUERY_PORT + JAEGER_QUERY_SERVICE_ENDPOINT).out());
+    public static void verify(String componentJaegerServiceName, String clientPodName, String operation, String jaegerServiceName) {
+        verifyThatServiceIsPresent(componentJaegerServiceName, clientPodName, jaegerServiceName);
+        verifyThatServiceTracesArePresent(componentJaegerServiceName, clientPodName, operation, jaegerServiceName);
+    }
 
-            LOGGER.info("Jaeger services {}", jaegerServices.getJsonArray("data").contains(jaegerServiceName));
-            return jaegerServices.getJsonArray("data").contains(jaegerServiceName);
+    private static void verifyThatServiceIsPresent(String componentJaegerServiceName, String clientPodName, String jaegerServiceName) {
+        TestUtils.waitFor("Service " + componentJaegerServiceName + " is present", Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_TIMEOUT, () -> {
+            JsonObject jaegerServices = new JsonObject(cmdKubeClient().execInPod(clientPodName, "/bin/bash", "-c", "curl " + jaegerServiceName + ":" + JAEGER_QUERY_PORT + JAEGER_QUERY_SERVICE_ENDPOINT).out());
+
+            if (jaegerServices.getJsonArray("data").contains(componentJaegerServiceName)) {
+                LOGGER.info("Jaeger service {} is present", componentJaegerServiceName);
+                return true;
+            } else {
+                LOGGER.info("Jaeger service {} is not present. Present services are {}.", componentJaegerServiceName, jaegerServices.getJsonArray("data"));
+                return false;
+            }
         });
     }
 
-    private static void verifyThatServiceTracesArePresent(String jaegerServiceName, String clientPodName) {
-        TestUtils.waitFor("Service" + jaegerServiceName + " has some traces", Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_TIMEOUT, () -> {
+    private static void verifyThatServiceTracesArePresent(String componentJaegerServiceName, String clientPodName, String operation, String jaegerServiceName) {
+        TestUtils.waitFor("Service " + componentJaegerServiceName + " has some traces", Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_TIMEOUT, () -> {
+            String query;
+            if (operation == null)  {
+                query = jaegerServiceName + ":" + JAEGER_QUERY_PORT + JAEGER_QUERY_SERVICE_TRACES_ENDPOINT + JAEGER_QUERY_SERVICE_PARAM_SERVICE + componentJaegerServiceName;
+            } else {
+                query = jaegerServiceName + ":" + JAEGER_QUERY_PORT + JAEGER_QUERY_SERVICE_TRACES_ENDPOINT + JAEGER_QUERY_SERVICE_PARAM_SERVICE + componentJaegerServiceName + JAEGER_QUERY_SERVICE_PARAM_OPERATION + operation;
+            }
+
             JsonObject jaegerServicesTraces = new JsonObject(cmdKubeClient().execInPod(clientPodName,
-                "/bin/bash", "-c", "curl " + JAEGER_QUERY_SERVICE + ":" + JAEGER_QUERY_PORT + JAEGER_QUERY_SERVICE_TRACES_ENDPOINT + jaegerServiceName).out());
+                "/bin/bash", "-c", "curl " + query).out());
             JsonArray traces = jaegerServicesTraces.getJsonArray("data");
 
             if (!(jaegerServicesTraces.getJsonArray("data").size() > 0)) {
-                LOGGER.error("Jaeger service {} does not contain data object", jaegerServiceName);
+                LOGGER.error("Jaeger service {} does not contain data object", componentJaegerServiceName);
                 return false;
             }
 

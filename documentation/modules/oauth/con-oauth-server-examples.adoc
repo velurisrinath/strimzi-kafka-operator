@@ -1,13 +1,13 @@
 // Module included in the following assemblies:
 //
-// assembly-oauth.adoc
+// assembly-oauth-authentication.adoc
 
 [id='con-oauth-server-examples-{context}']
 = Authorization server examples
 
 When choosing an authorization server, consider the features that best support configuration of your chosen authentication flow.
 
-For the purposes of testing {oauth} with {ProductName}, Keycloak and ORY Hydra were implemented as the {oauth} authorization server.
+For the purposes of testing OAuth 2.0 with Strimzi, Keycloak and ORY Hydra were implemented as the OAuth 2.0 authorization server.
 
 For more information, see:
 

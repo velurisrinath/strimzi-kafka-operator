@@ -6,22 +6,31 @@ package io.strimzi.operator.cluster.model;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.fabric8.kubernetes.api.model.Affinity;
+import io.fabric8.kubernetes.api.model.AffinityBuilder;
 import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.EnvVar;
+import io.fabric8.kubernetes.api.model.LabelSelector;
+import io.fabric8.kubernetes.api.model.NodeSelectorRequirement;
+import io.fabric8.kubernetes.api.model.NodeSelectorRequirementBuilder;
+import io.fabric8.kubernetes.api.model.NodeSelectorTerm;
+import io.fabric8.kubernetes.api.model.NodeSelectorTermBuilder;
 import io.fabric8.kubernetes.api.model.OwnerReference;
-import io.fabric8.kubernetes.api.model.Pod;
-import io.fabric8.kubernetes.api.model.Probe;
-import io.fabric8.kubernetes.api.model.ProbeBuilder;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
+import io.fabric8.kubernetes.api.model.Toleration;
 import io.fabric8.kubernetes.api.model.apps.StatefulSet;
+import io.fabric8.kubernetes.api.model.networking.v1.NetworkPolicyPeer;
 import io.strimzi.api.kafka.model.CertificateAuthority;
+import io.strimzi.api.kafka.model.HasConfigurableMetrics;
 import io.strimzi.api.kafka.model.SystemProperty;
 import io.strimzi.api.kafka.model.storage.JbodStorage;
 import io.strimzi.api.kafka.model.storage.PersistentClaimStorage;
 import io.strimzi.api.kafka.model.storage.Storage;
 import io.strimzi.api.kafka.model.TlsSidecar;
 import io.strimzi.api.kafka.model.TlsSidecarLogLevel;
+import io.strimzi.api.kafka.model.template.DeploymentTemplate;
+import io.strimzi.api.kafka.model.template.InternalServiceTemplate;
 import io.strimzi.api.kafka.model.template.PodDisruptionBudgetTemplate;
 import io.strimzi.api.kafka.model.template.PodTemplate;
 import io.strimzi.certs.CertAndKey;
@@ -33,31 +42,26 @@ import org.apache.logging.log4j.Logger;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * ModelUtils is a utility class that holds generic static helper functions
+ * These are generally to be used within the classes that extend the AbstractModel class
+ */
 public class ModelUtils {
-
-    public static final io.strimzi.api.kafka.model.Probe DEFAULT_TLS_SIDECAR_PROBE = new io.strimzi.api.kafka.model.ProbeBuilder()
-            .withInitialDelaySeconds(TlsSidecar.DEFAULT_HEALTHCHECK_DELAY)
-            .withTimeoutSeconds(TlsSidecar.DEFAULT_HEALTHCHECK_TIMEOUT)
-            .build();
 
     private ModelUtils() {}
 
     protected static final Logger log = LogManager.getLogger(ModelUtils.class.getName());
-
-    public static final String KUBERNETES_SERVICE_DNS_DOMAIN =
-            System.getenv().getOrDefault("KUBERNETES_SERVICE_DNS_DOMAIN", "cluster.local");
+    public static final String TLS_SIDECAR_LOG_LEVEL = "TLS_SIDECAR_LOG_LEVEL";
 
     /**
      * @param certificateAuthority The CA configuration.
@@ -85,10 +89,6 @@ public class ModelUtils {
         }
 
         return renewalDays;
-    }
-
-    public static String formatTimestamp(Date date) {
-        return new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ").format(date);
     }
 
     /**
@@ -122,101 +122,6 @@ public class ModelUtils {
         throw new KafkaUpgradeException("Could not find '" + containerName + "' container in StatefulSet " + sts.getMetadata().getName());
     }
 
-    /**
-     * @param pod The StatefulSet
-     * @param containerName The name of the container whoes environment variables are to be retrieved
-     * @param envVarName Name of the environment variable which we should get
-     * @return The environment of the Kafka container in the sts.
-     */
-    public static String getPodEnv(Pod pod, String containerName, String envVarName) {
-        if (pod != null) {
-            for (Container container : pod.getSpec().getContainers()) {
-                if (containerName.equals(container.getName())) {
-                    if (container.getEnv() != null) {
-                        for (EnvVar envVar : container.getEnv()) {
-                            if (envVarName.equals(envVar.getName()))    {
-                                return envVar.getValue();
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return null;
-    }
-
-    public static List<EnvVar> envAsList(Map<String, String> env) {
-        ArrayList<EnvVar> result = new ArrayList<>(env.size());
-        for (Map.Entry<String, String> entry : env.entrySet()) {
-            result.add(new EnvVar(entry.getKey(), entry.getValue(), null));
-        }
-        return result;
-    }
-
-    protected static ProbeBuilder newProbeBuilder(io.strimzi.api.kafka.model.Probe userProbe) {
-        return new ProbeBuilder()
-                .withInitialDelaySeconds(userProbe.getInitialDelaySeconds())
-                .withTimeoutSeconds(userProbe.getTimeoutSeconds())
-                .withPeriodSeconds(userProbe.getPeriodSeconds())
-                .withSuccessThreshold(userProbe.getSuccessThreshold())
-                .withFailureThreshold(userProbe.getFailureThreshold());
-    }
-
-
-    protected static Probe createTcpSocketProbe(int port, io.strimzi.api.kafka.model.Probe userProbe) {
-        Probe probe = ModelUtils.newProbeBuilder(userProbe)
-                .withNewTcpSocket()
-                .withNewPort()
-                .withIntVal(port)
-                .endPort()
-                .endTcpSocket()
-                .build();
-        log.trace("Created TCP socket probe {}", probe);
-        return probe;
-    }
-
-    protected static Probe createHttpProbe(String path, String port, io.strimzi.api.kafka.model.Probe userProbe) {
-        Probe probe = ModelUtils.newProbeBuilder(userProbe).withNewHttpGet()
-                .withPath(path)
-                .withNewPort(port)
-                .endHttpGet()
-                .build();
-        log.trace("Created http probe {}", probe);
-        return probe;
-    }
-
-    static Probe createExecProbe(List<String> command, io.strimzi.api.kafka.model.Probe userProbe) {
-        Probe probe = newProbeBuilder(userProbe).withNewExec()
-                .withCommand(command)
-                .endExec()
-                .build();
-        log.trace("Created exec probe {}", probe);
-        return probe;
-    }
-
-    static Probe tlsSidecarReadinessProbe(TlsSidecar tlsSidecar) {
-        io.strimzi.api.kafka.model.Probe tlsSidecarReadinessProbe;
-        if (tlsSidecar != null && tlsSidecar.getReadinessProbe() != null) {
-            tlsSidecarReadinessProbe = tlsSidecar.getReadinessProbe();
-        } else {
-            tlsSidecarReadinessProbe = DEFAULT_TLS_SIDECAR_PROBE;
-        }
-        return createExecProbe(Arrays.asList("/opt/stunnel/stunnel_healthcheck.sh", "2181"), tlsSidecarReadinessProbe);
-    }
-
-    static Probe tlsSidecarLivenessProbe(TlsSidecar tlsSidecar) {
-        io.strimzi.api.kafka.model.Probe tlsSidecarLivenessProbe;
-        if (tlsSidecar != null && tlsSidecar.getLivenessProbe() != null) {
-            tlsSidecarLivenessProbe = tlsSidecar.getLivenessProbe();
-        } else {
-            tlsSidecarLivenessProbe = DEFAULT_TLS_SIDECAR_PROBE;
-        }
-        return createExecProbe(Arrays.asList("/opt/stunnel/stunnel_healthcheck.sh", "2181"), tlsSidecarLivenessProbe);
-    }
-
-    public static final String TLS_SIDECAR_LOG_LEVEL = "TLS_SIDECAR_LOG_LEVEL";
-
     static EnvVar tlsSidecarLogEnvVar(TlsSidecar tlsSidecar) {
         return AbstractModel.buildEnvVar(TLS_SIDECAR_LOG_LEVEL,
                 (tlsSidecar != null && tlsSidecar.getLogLevel() != null ?
@@ -225,7 +130,7 @@ public class ModelUtils {
 
     public static Secret buildSecret(ClusterCa clusterCa, Secret secret, String namespace, String secretName,
             String commonName, String keyCertName, Labels labels, OwnerReference ownerReference, boolean isMaintenanceTimeWindowsSatisfied) {
-        Map<String, String> data = new HashMap<>();
+        Map<String, String> data = new HashMap<>(4);
         CertAndKey certAndKey = null;
         boolean shouldBeRegenerated = false;
         List<String> reasons = new ArrayList<>(2);
@@ -288,20 +193,24 @@ public class ModelUtils {
         if (ownerReference == null) {
             return new SecretBuilder()
                     .withNewMetadata()
-                    .withName(name)
-                    .withNamespace(namespace)
-                    .withLabels(labels.toMap())
+                        .withName(name)
+                        .withNamespace(namespace)
+                        .withLabels(labels.toMap())
                     .endMetadata()
-                    .withData(data).build();
+                    .withType("Opaque")
+                    .withData(data)
+                    .build();
         } else {
             return new SecretBuilder()
                     .withNewMetadata()
-                    .withName(name)
-                    .withOwnerReferences(ownerReference)
-                    .withNamespace(namespace)
-                    .withLabels(labels.toMap())
+                        .withName(name)
+                        .withOwnerReferences(ownerReference)
+                        .withNamespace(namespace)
+                        .withLabels(labels.toMap())
                     .endMetadata()
-                    .withData(data).build();
+                    .withType("Opaque")
+                    .withData(data)
+                    .build();
         }
     }
 
@@ -328,7 +237,6 @@ public class ModelUtils {
      * @param model AbstractModel class where the values from the PodTemplate should be set
      * @param pod PodTemplate with the values form the CRD
      */
-
     public static void parsePodTemplate(AbstractModel model, PodTemplate pod)   {
         if (pod != null)  {
             if (pod.getMetadata() != null) {
@@ -336,11 +244,79 @@ public class ModelUtils {
                 model.templatePodAnnotations = pod.getMetadata().getAnnotations();
             }
 
+            if (pod.getAffinity() != null)  {
+                model.setUserAffinity(pod.getAffinity());
+            }
+
+            if (pod.getTolerations() != null)   {
+                model.setTolerations(removeEmptyValuesFromTolerations(pod.getTolerations()));
+            }
+
             model.templateTerminationGracePeriodSeconds = pod.getTerminationGracePeriodSeconds();
             model.templateImagePullSecrets = pod.getImagePullSecrets();
             model.templateSecurityContext = pod.getSecurityContext();
             model.templatePodPriorityClassName = pod.getPriorityClassName();
             model.templatePodSchedulerName = pod.getSchedulerName();
+            model.templatePodHostAliases = pod.getHostAliases();
+            model.templatePodTopologySpreadConstraints = pod.getTopologySpreadConstraints();
+            model.templatePodEnableServiceLinks = pod.getEnableServiceLinks();
+        }
+    }
+
+    /**
+     * Parses the values from the InternalServiceTemplate in CRD model into the component model
+     *
+     * @param model AbstractModel class where the values from the PodTemplate should be set
+     * @param service InternalServiceTemplate with the values form the CRD
+     */
+    public static void parseInternalServiceTemplate(AbstractModel model, InternalServiceTemplate service)   {
+        if (service != null)  {
+            if (service.getMetadata() != null) {
+                model.templateServiceLabels = service.getMetadata().getLabels();
+                model.templateServiceAnnotations = service.getMetadata().getAnnotations();
+            }
+
+            model.templateServiceIpFamilyPolicy = service.getIpFamilyPolicy();
+            model.templateServiceIpFamilies = service.getIpFamilies();
+        }
+    }
+
+    /**
+     * Parses the values from the InternalServiceTemplate of a headless service in CRD model into the component model
+     *
+     * @param model AbstractModel class where the values from the PodTemplate should be set
+     * @param service InternalServiceTemplate with the values form the CRD
+     */
+    public static void parseInternalHeadlessServiceTemplate(AbstractModel model, InternalServiceTemplate service)   {
+        if (service != null)  {
+            if (service.getMetadata() != null) {
+                model.templateHeadlessServiceLabels = service.getMetadata().getLabels();
+                model.templateHeadlessServiceAnnotations = service.getMetadata().getAnnotations();
+            }
+
+            model.templateHeadlessServiceIpFamilyPolicy = service.getIpFamilyPolicy();
+            model.templateHeadlessServiceIpFamilies = service.getIpFamilies();
+        }
+    }
+
+    /**
+     * Parses the values from the DeploymentTemplate in CRD model into the component model
+     *
+     * @param model AbstractModel class where the values from the DeploymentTemplate should be set
+     * @param template DeploymentTemplate with the values form the CRD
+     */
+    public static void parseDeploymentTemplate(AbstractModel model, DeploymentTemplate template)   {
+        if (template != null) {
+            if (template.getMetadata() != null) {
+                model.templateDeploymentLabels = template.getMetadata().getLabels();
+                model.templateDeploymentAnnotations = template.getMetadata().getAnnotations();
+            }
+
+            if (template.getDeploymentStrategy() != null)   {
+                model.templateDeploymentStrategy = template.getDeploymentStrategy();
+            } else {
+                model.templateDeploymentStrategy = io.strimzi.api.kafka.model.template.DeploymentStrategy.ROLLING_UPDATE;
+            }
         }
     }
 
@@ -407,12 +383,16 @@ public class ModelUtils {
         Map<String, String> currentData = current.getData();
         Map<String, String> desiredData = desired.getData();
 
-        for (Map.Entry<String, String> entry : currentData.entrySet()) {
-            String desiredValue = desiredData.get(entry.getKey());
-            if (entry.getValue() != null
-                    && desiredValue != null
-                    && !entry.getValue().equals(desiredValue)) {
-                return true;
+        if (currentData == null) {
+            return true;
+        } else {
+            for (Map.Entry<String, String> entry : currentData.entrySet()) {
+                String desiredValue = desiredData.get(entry.getKey());
+                if (entry.getValue() != null
+                        && desiredValue != null
+                        && !entry.getValue().equals(desiredValue)) {
+                    return true;
+                }
             }
         }
 
@@ -428,10 +408,139 @@ public class ModelUtils {
         if (javaSystemProperties == null) {
             return null;
         }
-        List<String> javaSystemPropertiesList = new ArrayList<>();
+        List<String> javaSystemPropertiesList = new ArrayList<>(javaSystemProperties.size());
         for (SystemProperty property: javaSystemProperties) {
             javaSystemPropertiesList.add("-D" + property.getName() + "=" + property.getValue());
         }
         return String.join(" ", javaSystemPropertiesList);
+    }
+
+    /**
+     * This method transforms a String into a List of Strings, where each entry is an uncommented line of input.
+     * The lines beginning with '#' (comments) are ignored.
+     * @param config ConfigMap data as a String
+     * @return List of String key=value
+     */
+    public static List<String> getLinesWithoutCommentsAndEmptyLines(String config) {
+        List<String> validLines = new ArrayList<>();
+        if (config != null) {
+            List<String> allLines = Arrays.asList(config.split("\\r?\\n"));
+
+            for (String line : allLines) {
+                if (!line.isEmpty() && !line.matches("\\s*\\#.*")) {
+                    validLines.add(line);
+                }
+            }
+        }
+        return validLines;
+    }
+
+    /**
+     * If the toleration.value is an empty string, set it to null. That solves an issue when built STS contains a filed
+     * with an empty property value. K8s is removing properties like this and thus we cannot fetch an equal STS which was
+     * created with (some) empty value.
+     *
+     * @param tolerations   Tolerations list to check whether toleration.value is an empty string and eventually replace it by null
+     *
+     * @return              List of tolerations with fixed empty strings
+     */
+    public static List<Toleration> removeEmptyValuesFromTolerations(List<Toleration> tolerations) {
+        if (tolerations != null) {
+            tolerations.stream().filter(toleration -> toleration.getValue() != null && toleration.getValue().isEmpty()).forEach(emptyValTol -> emptyValTol.setValue(null));
+            return tolerations;
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     *
+     * @param builder the builder which is used to populate the node affinity
+     * @param userAffinity the userAffinity which is defined by the user
+     * @param topologyKey  the topology key which is used to select the node
+     * @return the AffinityBuilder which has the node selector with topology key which is needed to make sure
+     * the pods are scheduled only on nodes with the rack label
+     */
+    public static AffinityBuilder populateAffinityBuilderWithRackLabelSelector(AffinityBuilder builder, Affinity userAffinity, String topologyKey) {
+        // We need to add node affinity to make sure the pods are scheduled only on nodes with the rack label
+        NodeSelectorRequirement selector = new NodeSelectorRequirementBuilder()
+                .withNewOperator("Exists")
+                .withNewKey(topologyKey)
+                .build();
+
+        if (userAffinity != null
+                && userAffinity.getNodeAffinity() != null
+                && userAffinity.getNodeAffinity().getRequiredDuringSchedulingIgnoredDuringExecution() != null
+                && userAffinity.getNodeAffinity().getRequiredDuringSchedulingIgnoredDuringExecution().getNodeSelectorTerms() != null) {
+            // User has specified some Node Selector Terms => we should enhance them
+            List<NodeSelectorTerm> oldTerms = userAffinity.getNodeAffinity().getRequiredDuringSchedulingIgnoredDuringExecution().getNodeSelectorTerms();
+            List<NodeSelectorTerm> enhancedTerms = new ArrayList<>(oldTerms.size());
+
+            for (NodeSelectorTerm term : oldTerms) {
+                NodeSelectorTerm enhancedTerm = new NodeSelectorTermBuilder(term)
+                        .addToMatchExpressions(selector)
+                        .build();
+                enhancedTerms.add(enhancedTerm);
+            }
+
+            builder = builder
+                    .editOrNewNodeAffinity()
+                        .withNewRequiredDuringSchedulingIgnoredDuringExecution()
+                            .withNodeSelectorTerms(enhancedTerms)
+                        .endRequiredDuringSchedulingIgnoredDuringExecution()
+                    .endNodeAffinity();
+        } else {
+            // User has not specified any selector terms => we add our own
+            builder = builder
+                    .editOrNewNodeAffinity()
+                        .editOrNewRequiredDuringSchedulingIgnoredDuringExecution()
+                            .addNewNodeSelectorTerm()
+                                .withMatchExpressions(selector)
+                            .endNodeSelectorTerm()
+                        .endRequiredDuringSchedulingIgnoredDuringExecution()
+                    .endNodeAffinity();
+        }
+        return builder;
+    }
+
+    /**
+     * Decides whether the Cluster Operator needs namespaceSelector to be configured in the network policies in order
+     * to talk with the operands. This follows the following rules:
+     *     - If it runs in the same namespace as the operand, do not set namespace selector
+     *     - If it runs in a different namespace, but user provided selector labels, use the labels
+     *     - If it runs in a different namespace, and user didn't provided selector labels, open it to COs in all namespaces
+     *
+     * @param peer                      Network policy peer where the namespace selector should be set
+     * @param operandNamespace          Namespace of the operand
+     * @param operatorNamespace         Namespace of the Strimzi CO
+     * @param operatorNamespaceLabels   Namespace labels provided by the user
+     */
+    public static void setClusterOperatorNetworkPolicyNamespaceSelector(NetworkPolicyPeer peer, String operandNamespace, String operatorNamespace, Labels operatorNamespaceLabels)   {
+        if (!operandNamespace.equals(operatorNamespace)) {
+            // If CO and the operand do not run in the same namespace, we need to handle cross namespace access
+
+            if (operatorNamespaceLabels != null && !operatorNamespaceLabels.toMap().isEmpty())    {
+                // If user specified the namespace labels, we can use them to make the network policy as tight as possible
+                LabelSelector nsLabelSelector = new LabelSelector();
+                nsLabelSelector.setMatchLabels(operatorNamespaceLabels.toMap());
+                peer.setNamespaceSelector(nsLabelSelector);
+            } else {
+                // If no namespace labels were specified, we open the network policy to COs in all namespaces
+                peer.setNamespaceSelector(new LabelSelector());
+            }
+        }
+    }
+
+    /**
+     * Checks if the section of the custom resource has any metrics configuration and sets it in the AbstractModel.
+     *
+     * @param model                     The cluster model where the metrics will be configured
+     * @param resourceWithMetrics       The section of the resource with metrics configuration
+     */
+    public static void parseMetrics(AbstractModel model, HasConfigurableMetrics resourceWithMetrics)   {
+        if (resourceWithMetrics.getMetricsConfig() != null)    {
+            model.setMetricsEnabled(true);
+            model.setMetricsConfigInCm(resourceWithMetrics.getMetricsConfig());
+        }
     }
 }

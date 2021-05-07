@@ -32,6 +32,8 @@ import io.strimzi.operator.common.operator.resource.ReconcileResult;
 import io.strimzi.operator.common.operator.resource.SecretOperator;
 import io.strimzi.test.TestUtils;
 
+import io.strimzi.test.annotations.ParallelSuite;
+import io.strimzi.test.annotations.ParallelTest;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -41,7 +43,6 @@ import io.vertx.junit5.VertxTestContext;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 
@@ -89,6 +90,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(VertxExtension.class)
+@ParallelSuite
 public class CertificateRenewalTest {
 
     public static final String NAMESPACE = "test";
@@ -152,7 +154,7 @@ public class CertificateRenewalTest {
         when(secretOps.reconcile(eq(NAMESPACE), eq(KafkaCluster.clientsCaCertSecretName(NAME)), c.capture())).thenAnswer(i -> Future.succeededFuture(ReconcileResult.noop(i.getArgument(0))));
         when(secretOps.reconcile(eq(NAMESPACE), eq(KafkaCluster.clientsCaKeySecretName(NAME)), c.capture())).thenAnswer(i -> Future.succeededFuture(ReconcileResult.noop(i.getArgument(0))));
 
-        KafkaAssemblyOperator op = new KafkaAssemblyOperator(vertx, new PlatformFeaturesAvailability(false, KubernetesVersion.V1_9), certManager, passwordGenerator,
+        KafkaAssemblyOperator op = new KafkaAssemblyOperator(vertx, new PlatformFeaturesAvailability(false, KubernetesVersion.V1_16), certManager, passwordGenerator,
                 supplier, ResourceUtils.dummyClusterOperatorConfig(1L));
         Reconciliation reconciliation = new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, NAMESPACE, NAME);
 
@@ -160,7 +162,7 @@ public class CertificateRenewalTest {
 
         Promise reconcileCasComplete = Promise.promise();
         op.new ReconciliationState(reconciliation, kafka).reconcileCas(dateSupplier)
-            .setHandler(ar -> {
+            .onComplete(ar -> {
                 // If succeeded return the argument captor object instead of the Reconciliation state
                 // This is for the purposes of testing
                 // If failed then return the throwable of the reconcileCas
@@ -250,7 +252,7 @@ public class CertificateRenewalTest {
     }
 
 
-    @Test
+    @ParallelTest
     public void testReconcileCasGeneratesCertsInitially(VertxTestContext context) {
         CertificateAuthority certificateAuthority = new CertificateAuthorityBuilder()
                 .withValidityDays(100)
@@ -263,7 +265,7 @@ public class CertificateRenewalTest {
 
         Checkpoint async = context.checkpoint();
         reconcileCa(context, certificateAuthority, certificateAuthority)
-            .setHandler(context.succeeding(c -> context.verify(() -> {
+            .onComplete(context.succeeding(c -> context.verify(() -> {
                 assertThat(c.getAllValues(), hasSize(4));
 
                 assertThat(c.getAllValues().get(0).getData().keySet(), is(set(CA_CRT, CA_STORE, CA_STORE_PASSWORD)));
@@ -280,7 +282,7 @@ public class CertificateRenewalTest {
             })));
     }
 
-    @Test
+    @ParallelTest
     public void testReconcileCasWhenCustomCertsAreMissingThrows(VertxTestContext context) {
         CertificateAuthority certificateAuthority = new CertificateAuthorityBuilder()
                 .withValidityDays(100)
@@ -290,14 +292,14 @@ public class CertificateRenewalTest {
 
         Checkpoint async = context.checkpoint();
         reconcileCa(context, certificateAuthority, certificateAuthority)
-            .setHandler(context.failing(e -> context.verify(() -> {
+            .onComplete(context.failing(e -> context.verify(() -> {
                 assertThat(e, instanceOf(InvalidConfigurationException.class));
                 assertThat(e.getMessage(), is("Cluster CA should not be generated, but the secrets were not found."));
                 async.flag();
             })));
     }
 
-    @Test
+    @ParallelTest
     public void testReconcileCasNoCertsGetGeneratedOutsideRenewalPeriod(VertxTestContext context)
             throws IOException, CertificateException, KeyStoreException, NoSuchAlgorithmException {
         assertNoCertsGetGeneratedOutsideRenewalPeriod(context, true);
@@ -349,7 +351,7 @@ public class CertificateRenewalTest {
         Checkpoint async = context.checkpoint();
 
         reconcileCa(context, certificateAuthority, certificateAuthority)
-            .setHandler(context.succeeding(c -> context.verify(() -> {
+            .onComplete(context.succeeding(c -> context.verify(() -> {
                 assertThat(c.getAllValues().get(0).getData().keySet(), is(set(CA_CRT, CA_STORE, CA_STORE_PASSWORD)));
                 assertThat(c.getAllValues().get(0).getData().get(CA_CRT), is(initialClusterCaCertSecret.getData().get(CA_CRT)));
                 assertDoesNotThrow(() -> {
@@ -373,7 +375,7 @@ public class CertificateRenewalTest {
 
     }
 
-    @Test
+    @ParallelTest
     public void testGenerateTruststoreFromOldSecrets(VertxTestContext context)
             throws IOException, CertificateException, KeyStoreException, NoSuchAlgorithmException {
         CertificateAuthority certificateAuthority = new CertificateAuthorityBuilder()
@@ -403,7 +405,7 @@ public class CertificateRenewalTest {
 
         Checkpoint async = context.checkpoint();
         reconcileCa(context, certificateAuthority, certificateAuthority)
-            .setHandler(context.succeeding(c -> context.verify(() -> {
+            .onComplete(context.succeeding(c -> context.verify(() -> {
                 assertThat(c.getAllValues(), hasSize(4));
 
                 Map<String, String> clusterCaCertData = c.getAllValues().get(0).getData();
@@ -449,7 +451,7 @@ public class CertificateRenewalTest {
             })));
     }
 
-    @Test
+    @ParallelTest
     public void testNewCertsGetGeneratedWhenInRenewalPeriodAuto(VertxTestContext context)
             throws IOException, CertificateException, KeyStoreException, NoSuchAlgorithmException {
         CertificateAuthority certificateAuthority = new CertificateAuthorityBuilder()
@@ -486,7 +488,7 @@ public class CertificateRenewalTest {
 
         Checkpoint async = context.checkpoint();
         reconcileCa(context, certificateAuthority, certificateAuthority)
-            .setHandler(context.succeeding(c -> context.verify(() -> {
+            .onComplete(context.succeeding(c -> context.verify(() -> {
                 assertThat(c.getAllValues(), hasSize(4));
 
                 Map<String, String> clusterCaCertData = c.getAllValues().get(0).getData();
@@ -534,7 +536,7 @@ public class CertificateRenewalTest {
             })));
     }
 
-    @Test
+    @ParallelTest
     public void testNewCertsGetGeneratedWhenInRenewalPeriodAutoOutsideOfMaintenanceWindow(VertxTestContext context)
             throws IOException, CertificateException, KeyStoreException, NoSuchAlgorithmException {
         CertificateAuthority certificateAuthority = new CertificateAuthorityBuilder()
@@ -584,7 +586,7 @@ public class CertificateRenewalTest {
 
         Checkpoint async = context.checkpoint();
         reconcileCa(context, kafka, () -> Date.from(LocalDateTime.of(2018, 11, 26, 9, 00, 0).atZone(ZoneId.of("GMT")).toInstant()))
-            .setHandler(context.succeeding(c -> context.verify(() -> {
+            .onComplete(context.succeeding(c -> context.verify(() -> {
                 assertThat(c.getAllValues(), hasSize(4));
 
                 Map<String, String> clusterCaCertData = c.getAllValues().get(0).getData();
@@ -635,7 +637,7 @@ public class CertificateRenewalTest {
             })));
     }
 
-    @Test
+    @ParallelTest
     public void testNewCertsGetGeneratedWhenInRenewalPeriodAutoWithinMaintenanceWindow(VertxTestContext context)
             throws IOException, CertificateException, KeyStoreException, NoSuchAlgorithmException {
         CertificateAuthority certificateAuthority = new CertificateAuthorityBuilder()
@@ -685,7 +687,7 @@ public class CertificateRenewalTest {
 
         Checkpoint async = context.checkpoint();
         reconcileCa(context, kafka, () -> Date.from(LocalDateTime.of(2018, 11, 26, 9, 12, 0).atZone(ZoneId.of("GMT")).toInstant()))
-            .setHandler(context.succeeding(c -> context.verify(() -> {
+            .onComplete(context.succeeding(c -> context.verify(() -> {
                 assertThat(c.getAllValues().size(), is(4));
 
                 Map<String, String> clusterCaCertData = c.getAllValues().get(0).getData();
@@ -735,7 +737,7 @@ public class CertificateRenewalTest {
             })));
     }
 
-    @Test
+    @ParallelTest
     public void testNewKeyGetGeneratedWhenInRenewalPeriodAuto(VertxTestContext context)
             throws IOException, CertificateException, KeyStoreException, NoSuchAlgorithmException {
         CertificateAuthority certificateAuthority = new CertificateAuthorityBuilder()
@@ -774,7 +776,7 @@ public class CertificateRenewalTest {
 
         Checkpoint async = context.checkpoint();
         reconcileCa(context, certificateAuthority, certificateAuthority)
-            .setHandler(context.succeeding(c -> context.verify(() -> {
+            .onComplete(context.succeeding(c -> context.verify(() -> {
                 assertThat(c.getAllValues(), hasSize(4));
 
                 Map<String, String> clusterCaCertData = c.getAllValues().get(0).getData();
@@ -838,7 +840,7 @@ public class CertificateRenewalTest {
             })));
     }
 
-    @Test
+    @ParallelTest
     public void testNewKeyGeneratedWhenInRenewalPeriodAutoOutsideOfTimeWindow(VertxTestContext context)
             throws IOException, CertificateException, KeyStoreException, NoSuchAlgorithmException {
         CertificateAuthority certificateAuthority = new CertificateAuthorityBuilder()
@@ -889,7 +891,7 @@ public class CertificateRenewalTest {
 
         Checkpoint async = context.checkpoint();
         reconcileCa(context, kafka, () -> Date.from(LocalDateTime.of(2018, 11, 26, 9, 0, 0).atZone(ZoneId.of("GMT")).toInstant()))
-            .setHandler(context.succeeding(c -> context.verify(() -> {
+            .onComplete(context.succeeding(c -> context.verify(() -> {
                 assertThat(c.getAllValues(), hasSize(4));
 
                 Map<String, String> clusterCaCertData = c.getAllValues().get(0).getData();
@@ -938,7 +940,7 @@ public class CertificateRenewalTest {
             })));
     }
 
-    @Test
+    @ParallelTest
     public void testNewKeyGeneratedWhenInRenewalPeriodAutoWithinTimeWindow(VertxTestContext context)
             throws IOException, CertificateException, KeyStoreException, NoSuchAlgorithmException {
         CertificateAuthority certificateAuthority = new CertificateAuthorityBuilder()
@@ -989,7 +991,7 @@ public class CertificateRenewalTest {
 
         Checkpoint async = context.checkpoint();
         reconcileCa(context, kafka, () -> Date.from(LocalDateTime.of(2018, 11, 26, 9, 12, 0).atZone(ZoneId.of("GMT")).toInstant()))
-            .setHandler(context.succeeding(c -> context.verify(() -> {
+            .onComplete(context.succeeding(c -> context.verify(() -> {
 
                 assertThat(c.getAllValues(), hasSize(4));
 
@@ -1062,7 +1064,7 @@ public class CertificateRenewalTest {
                 .generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(newClusterCaCert)));
     }
 
-    @Test
+    @ParallelTest
     public void testExpiredCertsGetRemovedAuto(VertxTestContext context)
             throws IOException, CertificateException, KeyStoreException, NoSuchAlgorithmException {
         CertificateAuthority certificateAuthority = new CertificateAuthorityBuilder()
@@ -1132,7 +1134,7 @@ public class CertificateRenewalTest {
 
         Checkpoint async = context.checkpoint();
         reconcileCa(context, certificateAuthority, certificateAuthority)
-            .setHandler(context.succeeding(c -> context.verify(() -> {
+            .onComplete(context.succeeding(c -> context.verify(() -> {
                 assertThat(c.getAllValues(), hasSize(4));
 
                 Map<String, String> clusterCaCertData = c.getAllValues().get(0).getData();
@@ -1158,7 +1160,7 @@ public class CertificateRenewalTest {
             })));
     }
 
-    @Test
+    @ParallelTest
     public void testCustomCertsNotReconciled(VertxTestContext context)
             throws IOException, CertificateException, KeyStoreException, NoSuchAlgorithmException {
         CertificateAuthority certificateAuthority = new CertificateAuthorityBuilder()
@@ -1196,13 +1198,13 @@ public class CertificateRenewalTest {
 
         Checkpoint async = context.checkpoint();
         reconcileCa(context, certificateAuthority, certificateAuthority)
-            .setHandler(context.succeeding(c -> context.verify(() -> {
+            .onComplete(context.succeeding(c -> context.verify(() -> {
                 assertThat(c.getAllValues(), hasSize(0));
                 async.flag();
             })));
     }
 
-    @Test
+    @ParallelTest
     public void testRenewalOfDeploymentCertificatesWithNullSecret() throws IOException {
         CertAndKey newCertAndKey = new CertAndKey("new-key".getBytes(), "new-cert".getBytes(), "new-truststore".getBytes(), "new-keystore".getBytes(), "new-password");
         ClusterCa clusterCaMock = mock(ClusterCa.class);
@@ -1224,7 +1226,7 @@ public class CertificateRenewalTest {
         assertThat(newSecret.getData(), hasEntry("deployment.password", newCertAndKey.storePasswordAsBase64String()));
     }
 
-    @Test
+    @ParallelTest
     public void testRenewalOfDeploymentCertificatesWithRenewingCa() throws IOException {
         Secret initialSecret = new SecretBuilder()
                 .withNewMetadata()
@@ -1258,7 +1260,7 @@ public class CertificateRenewalTest {
         assertThat(newSecret.getData(), hasEntry("deployment.password", newCertAndKey.storePasswordAsBase64String()));
     }
 
-    @Test
+    @ParallelTest
     public void testRenewalOfDeploymentCertificatesDelayedRenewal() throws IOException {
         Secret initialSecret = new SecretBuilder()
                 .withNewMetadata()
@@ -1292,7 +1294,7 @@ public class CertificateRenewalTest {
         assertThat(newSecret.getData(), hasEntry("deployment.password", newCertAndKey.storePasswordAsBase64String()));
     }
 
-    @Test
+    @ParallelTest
     public void testRenewalOfDeploymentCertificatesDelayedRenewalOutsideOfMaintenanceWindow() throws IOException {
         Secret initialSecret = new SecretBuilder()
                 .withNewMetadata()

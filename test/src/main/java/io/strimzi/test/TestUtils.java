@@ -6,16 +6,20 @@ package io.strimzi.test;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLParser;
+import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.HasMetadata;
 import io.fabric8.kubernetes.api.model.OwnerReference;
 import io.vertx.core.VertxException;
@@ -30,7 +34,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
 import java.io.Reader;
+import java.io.StringWriter;
 import java.io.Writer;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -43,6 +49,7 @@ import java.util.AbstractMap;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -57,27 +64,34 @@ import static java.util.Arrays.asList;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 
+@SuppressWarnings({"checkstyle:ClassFanOutComplexity"})
 public final class TestUtils {
 
     private static final Logger LOGGER = LogManager.getLogger(TestUtils.class);
 
+    public static final String USER_PATH = System.getProperty("user.dir");
+
     public static final String LINE_SEPARATOR = System.getProperty("line.separator");
 
-    public static final String CRD_TOPIC = "../install/cluster-operator/043-Crd-kafkatopic.yaml";
+    public static final String CRD_TOPIC = USER_PATH + "/../packaging/install/cluster-operator/043-Crd-kafkatopic.yaml";
 
-    public static final String CRD_KAFKA = "../install/cluster-operator/040-Crd-kafka.yaml";
+    public static final String CRD_KAFKA = USER_PATH + "/../packaging/install/cluster-operator/040-Crd-kafka.yaml";
 
-    public static final String CRD_KAFKA_CONNECT = "../install/cluster-operator/041-Crd-kafkaconnect.yaml";
+    public static final String CRD_KAFKA_CONNECT = USER_PATH + "/../packaging/install/cluster-operator/041-Crd-kafkaconnect.yaml";
 
-    public static final String CRD_KAFKA_CONNECT_S2I = "../install/cluster-operator/042-Crd-kafkaconnects2i.yaml";
+    public static final String CRD_KAFKA_CONNECT_S2I = USER_PATH + "/../packaging/install/cluster-operator/042-Crd-kafkaconnects2i.yaml";
 
-    public static final String CRD_KAFKA_USER = "../install/cluster-operator/044-Crd-kafkauser.yaml";
+    public static final String CRD_KAFKA_USER = USER_PATH + "/../packaging/install/cluster-operator/044-Crd-kafkauser.yaml";
 
-    public static final String CRD_KAFKA_MIRROR_MAKER = "../install/cluster-operator/045-Crd-kafkamirrormaker.yaml";
+    public static final String CRD_KAFKA_MIRROR_MAKER = USER_PATH + "/../packaging/install/cluster-operator/045-Crd-kafkamirrormaker.yaml";
 
-    public static final String CRD_KAFKA_BRIDGE = "../install/cluster-operator/046-Crd-kafkabridge.yaml";
+    public static final String CRD_KAFKA_BRIDGE = USER_PATH + "/../packaging/install/cluster-operator/046-Crd-kafkabridge.yaml";
 
-    public static final String CRD_KAFKA_MIRROR_MAKER_2 = "../install/cluster-operator/048-Crd-kafkamirrormaker2.yaml";
+    public static final String CRD_KAFKA_MIRROR_MAKER_2 = USER_PATH + "/../packaging/install/cluster-operator/048-Crd-kafkamirrormaker2.yaml";
+
+    public static final String CRD_KAFKA_CONNECTOR = USER_PATH + "/../packaging/install/cluster-operator/047-Crd-kafkaconnector.yaml";
+
+    public static final String CRD_KAFKA_REBALANCE = USER_PATH + "/../packaging/install/cluster-operator/049-Crd-kafkarebalance.yaml";
 
     private TestUtils() {
         // All static methods
@@ -109,11 +123,22 @@ public final class TestUtils {
     public static long waitFor(String description, long pollIntervalMs, long timeoutMs, BooleanSupplier ready, Runnable onTimeout) {
         LOGGER.debug("Waiting for {}", description);
         long deadline = System.currentTimeMillis() + timeoutMs;
+        String exceptionMessage = null;
+        int exceptionCount = 0;
+        StringWriter stackTraceError = new StringWriter();
+
         while (true) {
             boolean result;
             try {
                 result = ready.getAsBoolean();
             } catch (Exception e) {
+                exceptionMessage = e.getMessage();
+                if (++exceptionCount == 1 && exceptionMessage != null) {
+                    // Log the first exception as soon as it occurs
+                    LOGGER.error("Exception waiting for {}, {}", description, exceptionMessage);
+                    // log the stacktrace
+                    e.printStackTrace(new PrintWriter(stackTraceError));
+                }
                 result = false;
             }
             long timeLeft = deadline - System.currentTimeMillis();
@@ -121,6 +146,14 @@ public final class TestUtils {
                 return timeLeft;
             }
             if (timeLeft <= 0) {
+                if (exceptionCount > 1) {
+                    LOGGER.error("Exception waiting for {}, {}", description, exceptionMessage);
+
+                    if (!stackTraceError.toString().isEmpty()) {
+                        // printing handled stacktrace
+                        LOGGER.error(stackTraceError.toString());
+                    }
+                }
                 onTimeout.run();
                 WaitException waitException = new WaitException("Timeout after " + timeoutMs + " ms waiting for " + description);
                 waitException.printStackTrace();
@@ -149,6 +182,7 @@ public final class TestUtils {
 
     public static String getFileAsString(String filePath) {
         try {
+            LOGGER.info(filePath);
             return new String(Files.readAllBytes(Paths.get(filePath)), "UTF-8");
         } catch (IOException e) {
             LOGGER.info("File with path {} not found", filePath);
@@ -264,6 +298,18 @@ public final class TestUtils {
         }
     }
 
+    public static String fromYamlToJson(String yaml) {
+        try {
+            ObjectMapper yamlReader = new ObjectMapper(new YAMLFactory());
+            Object obj = yamlReader.readValue(yaml, Object.class);
+
+            ObjectMapper jsonWriter = new ObjectMapper();
+            return jsonWriter.configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true).writeValueAsString(obj);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException(e);
+        }
+    }
+
     public static <T> String toYamlString(T instance) {
         ObjectMapper mapper = new YAMLMapper()
                 .disable(YAMLGenerator.Feature.USE_NATIVE_TYPE_ID)
@@ -276,9 +322,34 @@ public final class TestUtils {
     }
 
     public static <T> T configFromYaml(String yamlPath, Class<T> c) {
+        return configFromYaml(new File(yamlPath), c);
+    }
+
+    public static ConfigMap configMapFromYaml(String yamlPath, String name) {
+        try {
+            YAMLFactory yaml = new YAMLFactory();
+            ObjectMapper mapper = new ObjectMapper(yaml);
+            YAMLParser yamlParser = yaml.createParser(new File(yamlPath));
+            List<ConfigMap> list = mapper.readValues(yamlParser, new TypeReference<ConfigMap>() { }).readAll();
+            Optional<ConfigMap> cmOpt = list.stream().filter(cm -> "ConfigMap".equals(cm.getKind()) && name.equals(cm.getMetadata().getName())).findFirst();
+            if (cmOpt.isPresent()) {
+                return cmOpt.get();
+            } else {
+                LOGGER.warn("ConfigMap {} not found in file {}", name, yamlPath);
+                return null;
+            }
+        } catch (InvalidFormatException e) {
+            throw new IllegalArgumentException(e);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+    }
+
+    public static <T> T configFromYaml(File yamlFile, Class<T> c) {
         ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
         try {
-            return mapper.readValue(new File(yamlPath), c);
+            return mapper.readValue(yamlFile, c);
         } catch (InvalidFormatException e) {
             throw new IllegalArgumentException(e);
         } catch (IOException e) {
@@ -369,20 +440,12 @@ public final class TestUtils {
         }
     }
 
-    public static String changeDeploymentNamespaceUpgrade(File deploymentFile, String namespace) {
+    public static String setMetadataNamespace(File roleBindingFile, String namespace) {
         YAMLMapper mapper = new YAMLMapper();
         try {
-            JsonNode node = mapper.readTree(deploymentFile);
-            // Change the docker org of the images in the 050-deployment.yaml
-            ObjectNode containerNode = (ObjectNode) node.at("/spec/template/spec/containers").get(0);
-            for (JsonNode envVar : containerNode.get("env")) {
-                String varName = envVar.get("name").textValue();
-                if (varName.matches("STRIMZI_NAMESPACE")) {
-                    // Replace all the default images with ones from the $DOCKER_ORG org and with the $DOCKER_TAG tag
-                    ((ObjectNode) envVar).remove("valueFrom");
-                    ((ObjectNode) envVar).put("value", namespace);
-                }
-            }
+            JsonNode node = mapper.readTree(roleBindingFile);
+            ObjectNode metadata = (ObjectNode) node.get("metadata");
+            metadata.put("namespace", namespace);
             return mapper.writeValueAsString(node);
         } catch (IOException e) {
             throw new RuntimeException(e);

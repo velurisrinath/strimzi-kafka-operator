@@ -9,7 +9,6 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.strimzi.api.kafka.Crds;
 import io.strimzi.api.kafka.KafkaConnectorList;
-import io.strimzi.api.kafka.model.DoneableKafkaConnector;
 import io.strimzi.api.kafka.model.KafkaConnector;
 import io.strimzi.api.kafka.model.KafkaConnectorBuilder;
 import io.strimzi.operator.KubernetesVersion;
@@ -22,6 +21,7 @@ import io.strimzi.operator.common.MetricsProvider;
 import io.strimzi.operator.common.MicrometerMetricsProvider;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.operator.resource.CrdOperator;
+import io.strimzi.test.annotations.ParallelTest;
 import io.strimzi.test.mockkube.MockKube;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -38,7 +38,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.IOException;
@@ -111,15 +110,15 @@ public class KafkaConnectorIT {
         }
     }
 
-    @Test
+    @ParallelTest
     public void test(VertxTestContext context) {
         KafkaConnectApiImpl connectClient = new KafkaConnectApiImpl(vertx);
 
         KubernetesClient client = new MockKube()
-                .withCustomResourceDefinition(Crds.kafkaConnector(), KafkaConnector.class, KafkaConnectorList.class, DoneableKafkaConnector.class)
+                .withCustomResourceDefinition(Crds.kafkaConnector(), KafkaConnector.class, KafkaConnectorList.class)
                 .end()
                 .build();
-        PlatformFeaturesAvailability pfa = new PlatformFeaturesAvailability(false, KubernetesVersion.V1_14);
+        PlatformFeaturesAvailability pfa = new PlatformFeaturesAvailability(false, KubernetesVersion.V1_20);
 
         String namespace = "ns";
         String connectorName = "my-connector";
@@ -165,9 +164,9 @@ public class KafkaConnectorIT {
 
         KafkaConnectAssemblyOperator operator = new KafkaConnectAssemblyOperator(vertx, pfa,
                 new ResourceOperatorSupplier(
-                        null, null, null, null, null, null, null, null, null, null, null,
-                        null, null, null, null, null, null, null, null, null, null, null,
-                        null, connectCrdOperator, null, null, null, null, metrics),
+                        null, null, null, null, null, null, null, null, null, null, null, null,
+                        null, null, null, null, null, null, null, null, null, null, null, null,
+                        null, null, connectCrdOperator, null, null, null, null, null, metrics, null),
                 ClusterOperatorConfig.fromMap(Collections.emptyMap(), KafkaVersionTestUtils.getKafkaVersionLookup()),
             connect -> new KafkaConnectApiImpl(vertx),
             connectCluster.getPort() + 2
@@ -177,7 +176,7 @@ public class KafkaConnectorIT {
         operator.reconcileConnectorAndHandleResult(new Reconciliation("test", "KafkaConnect", namespace, "bogus"),
                 "localhost", connectClient, true, connectorName,
                 connector)
-            .setHandler(context.succeeding(v -> assertConnectorIsRunning(context, client, namespace, connectorName)))
+            .onComplete(context.succeeding(v -> assertConnectorIsRunning(context, client, namespace, connectorName)))
             .compose(v -> {
                 config.remove(TestingConnector.START_TIME_MS, 1_000);
                 config.put(TestingConnector.START_TIME_MS, 1_000);
@@ -186,10 +185,9 @@ public class KafkaConnectorIT {
                         .withName(connectorName)
                         .patch(createKafkaConnector(namespace, connectorName, config));
                 return operator.reconcileConnectorAndHandleResult(new Reconciliation("test", "KafkaConnect", namespace, "bogus"),
-                        "localhost", connectClient, true, connectorName,
-                        connector);
+                        "localhost", connectClient, true, connectorName, connector);
             })
-            .setHandler(context.succeeding(v -> context.verify(() -> {
+            .onComplete(context.succeeding(v -> context.verify(() -> {
                 assertConnectorIsRunning(context, client, namespace, connectorName);
                 // Assert metrics from Connector Operator
                 MeterRegistry registry = metrics.meterRegistry();
@@ -224,6 +222,7 @@ public class KafkaConnectorIT {
             KafkaConnector kafkaConnector = Crds.kafkaConnectorOperation(client).inNamespace(namespace).withName(connectorName).get();
             assertThat(kafkaConnector, notNullValue());
             assertThat(kafkaConnector.getStatus(), notNullValue());
+            assertThat(kafkaConnector.getStatus().getTasksMax(), is(1));
             assertThat(kafkaConnector.getStatus().getConnectorStatus(), notNullValue());
             assertThat(kafkaConnector.getStatus().getConnectorStatus().get("connector"), instanceOf(Map.class));
             assertThat(((Map) kafkaConnector.getStatus().getConnectorStatus().get("connector")).get("state"), is("RUNNING"));

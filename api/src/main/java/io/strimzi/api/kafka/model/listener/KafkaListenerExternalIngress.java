@@ -7,7 +7,7 @@ package io.strimzi.api.kafka.model.listener;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
-import io.fabric8.kubernetes.api.model.networking.NetworkPolicyPeer;
+import io.fabric8.kubernetes.api.model.networking.v1.NetworkPolicyPeer;
 import io.strimzi.api.kafka.model.Constants;
 import io.strimzi.crdgenerator.annotations.Description;
 import io.strimzi.crdgenerator.annotations.KubeLink;
@@ -80,8 +80,7 @@ public class KafkaListenerExternalIngress extends KafkaListenerExternal {
         this.configuration = configuration;
     }
 
-    @Description("Configures the `Ingress` class that defines which `Ingress` controller will be used. " +
-            "If not set, the `Ingress` class is set to `nginx`.")
+    @Description("Configures the `Ingress` class that defines which `Ingress` controller will be used.")
     @JsonInclude(JsonInclude.Include.NON_NULL)
     @JsonProperty("class")
     public String getIngressClass() {

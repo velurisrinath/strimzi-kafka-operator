@@ -7,7 +7,6 @@ package io.strimzi.operator.common.operator.resource;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBinding;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBindingBuilder;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBindingList;
-import io.fabric8.kubernetes.api.model.rbac.DoneableClusterRoleBinding;
 import io.fabric8.kubernetes.api.model.rbac.RoleRef;
 import io.fabric8.kubernetes.api.model.rbac.RoleRefBuilder;
 import io.fabric8.kubernetes.api.model.rbac.Subject;
@@ -25,14 +24,13 @@ import static org.hamcrest.Matchers.hasSize;
 
 @ExtendWith(VertxExtension.class)
 public class ClusterRoleBindingOperatorIT extends AbstractNonNamespacedResourceOperatorIT<KubernetesClient,
-        ClusterRoleBinding, ClusterRoleBindingList, DoneableClusterRoleBinding,
-        Resource<ClusterRoleBinding, DoneableClusterRoleBinding>> {
+        ClusterRoleBinding, ClusterRoleBindingList, Resource<ClusterRoleBinding>> {
 
     @Override
     protected AbstractNonNamespacedResourceOperator<KubernetesClient,
-            ClusterRoleBinding, ClusterRoleBindingList, DoneableClusterRoleBinding,
-            Resource<ClusterRoleBinding, DoneableClusterRoleBinding>> operator() {
-        return new ClusterRoleBindingOperator(vertx, client, 10_000);
+            ClusterRoleBinding, ClusterRoleBindingList,
+            Resource<ClusterRoleBinding>> operator() {
+        return new ClusterRoleBindingOperator(vertx, client);
     }
 
     @Override
@@ -49,9 +47,10 @@ public class ClusterRoleBindingOperatorIT extends AbstractNonNamespacedResourceO
                 .withKind("ClusterRole")
                 .build();
 
+
         return new ClusterRoleBindingBuilder()
                 .withNewMetadata()
-                    .withName(RESOURCE_NAME)
+                    .withName(resourceName)
                     .withLabels(singletonMap("state", "new"))
                 .endMetadata()
                     .withSubjects(ks)
@@ -76,7 +75,7 @@ public class ClusterRoleBindingOperatorIT extends AbstractNonNamespacedResourceO
 
         return new ClusterRoleBindingBuilder()
                 .withNewMetadata()
-                    .withName(RESOURCE_NAME)
+                    .withName(resourceName)
                     .withLabels(singletonMap("state", "modified"))
                 .endMetadata()
                 .withSubjects(ks)

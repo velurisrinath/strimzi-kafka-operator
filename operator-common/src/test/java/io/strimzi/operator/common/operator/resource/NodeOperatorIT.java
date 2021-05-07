@@ -4,7 +4,6 @@
  */
 package io.strimzi.operator.common.operator.resource;
 
-import io.fabric8.kubernetes.api.model.DoneableNode;
 import io.fabric8.kubernetes.api.model.Node;
 import io.fabric8.kubernetes.api.model.NodeBuilder;
 import io.fabric8.kubernetes.api.model.NodeList;
@@ -20,25 +19,24 @@ import static org.hamcrest.MatcherAssert.assertThat;
 
 @ExtendWith(VertxExtension.class)
 public class NodeOperatorIT extends AbstractNonNamespacedResourceOperatorIT<KubernetesClient,
-        Node, NodeList, DoneableNode,
-        Resource<Node, DoneableNode>> {
+        Node, NodeList, Resource<Node>> {
 
     @Override
     protected AbstractNonNamespacedResourceOperator<KubernetesClient,
-            Node, NodeList, DoneableNode,
-            Resource<Node, DoneableNode>> operator() {
-        return new NodeOperator(vertx, client, 10_000);
+            Node, NodeList, Resource<Node>> operator() {
+        return new NodeOperator(vertx, client);
     }
 
     @Override
     protected Node getOriginal()  {
         return new NodeBuilder()
                 .withNewMetadata()
-                    .withName(RESOURCE_NAME)
+                    .withName(resourceName)
                     .withLabels(singletonMap("foo", "bar"))
                 .endMetadata()
                 .withNewSpec()
                     .withNewUnschedulable(true)
+                    .withNewPodCIDR("172.16.3.0/24")
                 .endSpec()
                 .build();
     }
@@ -47,11 +45,12 @@ public class NodeOperatorIT extends AbstractNonNamespacedResourceOperatorIT<Kube
     protected Node getModified()  {
         return new NodeBuilder()
                 .withNewMetadata()
-                    .withName(RESOURCE_NAME)
+                    .withName(resourceName)
                     .withLabels(singletonMap("bar", "foo"))
                 .endMetadata()
                 .withNewSpec()
                     .withNewUnschedulable(true)
+                    .withNewPodCIDR("172.16.3.0/24")
                 .endSpec()
                 .build();
     }

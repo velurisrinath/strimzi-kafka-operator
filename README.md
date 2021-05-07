@@ -2,8 +2,7 @@
 
 # Run Apache Kafka on Kubernetes and OpenShift
 
-[![Build Status](https://travis-ci.org/strimzi/strimzi-kafka-operator.svg?branch=master)](https://travis-ci.org/strimzi/strimzi-kafka-operator)
-[![Build Status](https://dev.azure.com/cncf/strimzi/_apis/build/status/build?branchName=master)](https://dev.azure.com/cncf/strimzi/_build/latest?definitionId=16&branchName=master)
+[![Build Status](https://dev.azure.com/cncf/strimzi/_apis/build/status/build?branchName=main)](https://dev.azure.com/cncf/strimzi/_build/latest?definitionId=16&branchName=main)
 [![GitHub release](https://img.shields.io/github/release/strimzi/strimzi-kafka-operator.svg)](https://github.com/strimzi/strimzi-kafka-operator/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](http://www.apache.org/licenses/LICENSE-2.0)
 [![Twitter Follow](https://img.shields.io/twitter/follow/strimziio.svg?style=social&label=Follow&style=for-the-badge)](https://twitter.com/strimziio)
@@ -18,7 +17,7 @@ To get up and running quickly, check our [Quick Start for Minikube, OKD (OpenShi
 
 ## Documentation
 
-Documentation to the current _master_ branch as well as all releases can be found on our [website][strimzi].
+Documentation to the current _main_ branch as well as all releases can be found on our [website][strimzi].
 
 ## Getting help
 
@@ -26,6 +25,18 @@ If you encounter any issues while using Strimzi, you can get help using:
 
 - [#strimzi channel on CNCF Slack](https://slack.cncf.io/)
 - [Strimzi Users mailing list](https://lists.cncf.io/g/cncf-strimzi-users/topics)
+- [GitHub Discussions](https://github.com/strimzi/strimzi-kafka-operator/discussions)
+
+## Strimzi Community Meetings
+
+You can join our regular community meetings:
+* Thursday 8:00 AM UTC (every 4 weeks starting from 4th June 2020) - [convert to your timezone](https://www.thetimezoneconverter.com/?t=8%3A00&tz=UTC)
+* Thursday 4:00 PM UTC (every 4 weeks starting from 18th June 2020) - [convert to your timezone](https://www.thetimezoneconverter.com/?t=16%3A00&tz=UTC)
+
+Resources:
+* [Meeting minutes, agenda and Zoom link](https://docs.google.com/document/d/1V1lMeMwn6d2x1LKxyydhjo2c_IFANveelLD880A6bYc/edit#heading=h.vgkvn1hr5uor)
+* [Recordings](https://youtube.com/playlist?list=PLpI4X8PMthYfONZopcRd4X_stq1C14Rtn)
+* [Calendar](https://calendar.google.com/calendar/embed?src=c_m9pusj5ce1b4hr8c92hsq50i00%40group.calendar.google.com) ([Subscribe to the calendar](https://calendar.google.com/calendar/u/0?cid=Y19tOXB1c2o1Y2UxYjRocjhjOTJoc3E1MGkwMEBncm91cC5jYWxlbmRhci5nb29nbGUuY29t))
 
 ## Contributing
 
@@ -39,8 +50,8 @@ All bugs, tasks or enhancements are tracked as [GitHub issues](https://github.co
 might be a good start for new contributors are marked with ["good-start"](https://github.com/strimzi/strimzi-kafka-operator/labels/good-start)
 label.
 
-The [Hacking guide](https://github.com/strimzi/strimzi-kafka-operator/blob/master/HACKING.md) describes how to build Strimzi and how to 
-test your changes before submitting a patch or opening a PR.
+The [Dev guide](https://github.com/strimzi/strimzi-kafka-operator/blob/main/development-docs/DEV_GUIDE.md) describes how to build Strimzi.
+Before submitting a patch, please make sure to understand, how to test your changes before opening a PR [Test guide](https://github.com/strimzi/strimzi-kafka-operator/blob/main/development-docs/TESTING.md).
 
 The [Documentation Contributor Guide](https://strimzi.io/contributing/guide/) describes how to contribute to Strimzi documentation.
 

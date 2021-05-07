@@ -4,12 +4,14 @@
  */
 package io.strimzi.test.k8s.cmdClient;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import io.strimzi.test.executor.ExecResult;
 
 import java.io.File;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 import static java.util.Arrays.asList;
 import static java.util.stream.Collectors.toList;
@@ -21,6 +23,9 @@ import static java.util.stream.Collectors.toList;
 public interface KubeCmdClient<K extends KubeCmdClient<K>> {
 
     String defaultNamespace();
+    String defaultOlmNamespace();
+    String defaultOlmSourceNamespace();
+
 
     /** Deletes the resources by resource name. */
     K deleteByName(String resourceType, String resourceName);
@@ -33,14 +38,26 @@ public interface KubeCmdClient<K extends KubeCmdClient<K>> {
     /** Creates the resources in the given files. */
     K create(File... files);
 
+    default K create(File file) {
+        return create(file, true);
+    }
+
+    K create(File file, boolean localValidation);
+
     /** Creates the resources in the given files. */
     K apply(File... files);
 
     /** Deletes the resources in the given files. */
     K delete(File... files);
 
+    K createOrReplace(File file);
+
     default K create(String... files) {
         return create(asList(files).stream().map(File::new).collect(toList()).toArray(new File[0]));
+    }
+
+    default K replace(String... files) {
+        return replace(asList(files).stream().map(File::new).collect(toList()).toArray(new File[0]));
     }
 
     default K apply(String... files) {
@@ -54,17 +71,27 @@ public interface KubeCmdClient<K extends KubeCmdClient<K>> {
     /** Replaces the resources in the given files. */
     K replace(File... files);
 
-
-    /** Returns an equivalent client, but logged in as cluster admin. */
-    K clientWithAdmin();
-
     K applyContent(String yamlContent);
+
+    K createContent(String yamlContent);
+
+    K replaceContent(String yamlContent);
 
     K deleteContent(String yamlContent);
 
     K createNamespace(String name);
 
     K deleteNamespace(String name);
+
+    /**
+     * Scale resource using the scale subresource
+     *
+     * @param kind      Kind of the resource which should be scaled
+     * @param name      Name of the resource which should be scaled
+     * @param replicas  Number of replicas to which the resource should be scaled
+     * @return          This kube client
+     */
+    K scaleByName(String kind, String name, int replicas);
 
     /**
      * Execute the given {@code command} in the given {@code pod}.
@@ -76,6 +103,8 @@ public interface KubeCmdClient<K extends KubeCmdClient<K>> {
 
     ExecResult execInCurrentNamespace(String... commands);
 
+    ExecResult execInCurrentNamespace(boolean logToOutput, String... commands);
+
     /**
      * Execute the given {@code command} in the given {@code container} which is deployed in {@code pod}.
      * @param pod The pod
@@ -84,6 +113,8 @@ public interface KubeCmdClient<K extends KubeCmdClient<K>> {
      * @return The process result.
      */
     ExecResult execInPodContainer(String pod, String container, String... command);
+
+    ExecResult execInPodContainer(boolean logToOutput, String pod, String container, String... command);
 
     /**
      * Execute the given {@code command}.
@@ -99,6 +130,24 @@ public interface KubeCmdClient<K extends KubeCmdClient<K>> {
      * @return The process result.
      */
     ExecResult exec(boolean throwError, String... command);
+
+    /**
+     * Execute the given {@code command}. You can specify if potential failure will thrown the exception or not.
+     * @param throwError parameter which control thrown exception in case of failure
+     * @param command The command
+     * @param logToOutput determines if we want to print whole output of command
+     * @return The process result.
+     */
+    ExecResult exec(boolean throwError, boolean logToOutput, String... command);
+
+    /**
+     * Wait for the resource with the given {@code name} to be reach the state defined by the predicate.
+     * @param resource The resource type.
+     * @param name The resource name.
+     * @param condition Predicate to test if the desired state was achieved
+     * @return This kube client.
+     */
+    K waitFor(String resource, String name, Predicate<JsonNode> condition);
 
     /**
      * Wait for the resource with the given {@code name} to be created.
@@ -127,6 +176,10 @@ public interface KubeCmdClient<K extends KubeCmdClient<K>> {
     List<String> list(String resourceType);
 
     String getResourceAsYaml(String resourceType, String resourceName);
+
+    String getResources(String resourceType);
+
+    String getResourcesAsYaml(String resourceType);
 
     void createResourceAndApply(String template, Map<String, String> params);
 
@@ -166,4 +219,10 @@ public interface KubeCmdClient<K extends KubeCmdClient<K>> {
     List<String> listResourcesByLabel(String resourceType, String label);
 
     String cmd();
+
+    String getResourceJsonPath(String resourceType, String resourceName, String path);
+
+    boolean getResourceReadiness(String resourceType, String resourceName);
+
+    void patchResource(String resourceType, String resourceName, String patchPath, String value);
 }

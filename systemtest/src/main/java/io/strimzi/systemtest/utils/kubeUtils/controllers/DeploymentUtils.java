@@ -5,21 +5,18 @@
 package io.strimzi.systemtest.utils.kubeUtils.controllers;
 
 import io.fabric8.kubernetes.api.model.LabelSelector;
-import io.fabric8.kubernetes.api.model.LabelSelectorBuilder;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodCondition;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.api.model.apps.DeploymentCondition;
-import io.strimzi.api.kafka.model.KafkaConnectS2IResources;
 import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.resources.ResourceOperation;
 import io.strimzi.systemtest.utils.kubeUtils.objects.PodUtils;
-import io.strimzi.systemtest.utils.kafkaUtils.KafkaConnectS2IUtils;
 import io.strimzi.test.TestUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -31,8 +28,72 @@ import static java.util.Arrays.asList;
 public class DeploymentUtils {
 
     private static final Logger LOGGER = LogManager.getLogger(DeploymentUtils.class);
+    private static final long READINESS_TIMEOUT = ResourceOperation.getTimeoutForResourceReadiness(Constants.DEPLOYMENT);
+    private static final long DELETION_TIMEOUT = ResourceOperation.getTimeoutForResourceDeletion();
 
     private DeploymentUtils() { }
+
+    /**
+     * Log actual status of deployment with pods
+     * @param deployment - every Deployment, that HasMetadata and has status (fabric8 status)
+     **/
+    public static void logCurrentDeploymentStatus(Deployment deployment, String namespaceName) {
+        if (deployment != null) {
+            String kind = deployment.getKind();
+            String name = deployment.getMetadata().getName();
+
+            List<String> log = new ArrayList<>(asList("\n", kind, " status:\n", "\nConditions:\n"));
+
+            for (DeploymentCondition deploymentCondition : deployment.getStatus().getConditions()) {
+                log.add("\tType: " + deploymentCondition.getType() + "\n");
+                log.add("\tMessage: " + deploymentCondition.getMessage() + "\n");
+            }
+
+            if (kubeClient(namespaceName).listPodsByPrefixInName(name).size() != 0) {
+                log.add("\nPods with conditions and messages:\n\n");
+
+                for (Pod pod : kubeClient(namespaceName).listPodsByPrefixInName(name)) {
+                    log.add(pod.getMetadata().getName() + ":");
+                    for (PodCondition podCondition : pod.getStatus().getConditions()) {
+                        if (podCondition.getMessage() != null) {
+                            log.add("\n\tType: " + podCondition.getType() + "\n");
+                            log.add("\tMessage: " + podCondition.getMessage() + "\n");
+                        }
+                    }
+                    log.add("\n\n");
+                }
+                LOGGER.info("{}", String.join("", log));
+            }
+
+            LOGGER.info("{}", String.join("", log));
+        }
+    }
+
+    public static void logCurrentDeploymentStatus(Deployment deployment) {
+        logCurrentDeploymentStatus(deployment, kubeClient().getNamespace());
+    }
+
+    public static void waitForNoRollingUpdate(String namespaceName, String deploymentName, Map<String, String> pods) {
+        // alternative to sync hassling AtomicInteger one could use an integer array instead
+        // not need to be final because reference to the array does not get another array assigned
+        int[] i = {0};
+
+        TestUtils.waitFor("stability of rolling update will be not triggered", Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_TIMEOUT,
+            () -> {
+                if (!DeploymentUtils.depHasRolled(namespaceName, deploymentName, pods)) {
+                    LOGGER.info("{} pods not rolling waiting, remaining seconds for stability {}", pods.toString(),
+                        Constants.GLOBAL_RECONCILIATION_COUNT - i[0]);
+                    return i[0]++ == Constants.GLOBAL_RECONCILIATION_COUNT;
+                } else {
+                    throw new RuntimeException(pods.toString() + " pods are rolling!");
+                }
+            }
+        );
+    }
+
+    public static void waitForNoRollingUpdate(String deploymentName, Map<String, String> pods) {
+        waitForNoRollingUpdate(kubeClient().getNamespace(), deploymentName, pods);
+    }
 
     /**
      * Returns a map of pod name to resource version for the pods currently in the given deployment.
@@ -40,30 +101,25 @@ public class DeploymentUtils {
      * @return A map of pod name to resource version for pods in the given Deployment.
      */
     public static Map<String, String> depSnapshot(String name) {
-        Deployment deployment = kubeClient().getDeployment(name);
-        LabelSelector selector = deployment.getSpec().getSelector();
-        return PodUtils.podSnapshot(selector);
+        return depSnapshot(kubeClient().getNamespace(), name);
     }
 
-    /**
-     * Returns a map of pod name to resource version for the pods currently in the given DeploymentConfig.
-     * @param name The DeploymentConfig name.
-     * @return A map of pod name to resource version for pods in the given DeploymentConfig.
-     */
-    public static Map<String, String> depConfigSnapshot(String name) {
-        LabelSelector selector = new LabelSelectorBuilder().addToMatchLabels(kubeClient().getDeploymentConfigSelectors(name)).build();
-        return PodUtils.podSnapshot(selector);
+    public static Map<String, String> depSnapshot(String namespaceName, String name) {
+        Deployment deployment = kubeClient(namespaceName).getDeployment(namespaceName, name);
+        LabelSelector selector = deployment.getSpec().getSelector();
+        return PodUtils.podSnapshot(namespaceName, selector);
     }
 
     /**
      * Method to check that all pods for expected Deployment were rolled
+     * @param namespaceName Namespace name
      * @param name Deployment name
      * @param snapshot Snapshot of pods for Deployment before the rolling update
      * @return true when the pods for Deployment are recreated
      */
-    public static boolean depHasRolled(String name, Map<String, String> snapshot) {
+    public static boolean depHasRolled(String namespaceName, String name, Map<String, String> snapshot) {
         LOGGER.debug("Existing snapshot: {}", new TreeMap<>(snapshot));
-        Map<String, String> map = PodUtils.podSnapshot(kubeClient().getDeployment(name).getSpec().getSelector());
+        Map<String, String> map = PodUtils.podSnapshot(namespaceName, kubeClient(namespaceName).getDeployment(namespaceName, name).getSpec().getSelector());
         LOGGER.debug("Current  snapshot: {}", new TreeMap<>(map));
         int current = map.size();
         map.keySet().retainAll(snapshot.keySet());
@@ -76,65 +132,30 @@ public class DeploymentUtils {
         }
     }
 
-    /**
-     * Method to check that all pods for expected DeploymentConfig were rolled
-     * @param name DeploymentConfig name
-     * @param snapshot Snapshot of pods for DeploymentConfig before the rolling update
-     * @return true when the pods for DeploymentConfig are recreated
-     */
-    public static boolean depConfigHasRolled(String name, Map<String, String> snapshot) {
-        LOGGER.debug("Existing snapshot: {}", new TreeMap<>(snapshot));
-        LabelSelector selector = new LabelSelectorBuilder().addToMatchLabels(kubeClient().getDeploymentConfigSelectors(name)).build();
-        Map<String, String> map = PodUtils.podSnapshot(selector);
-        LOGGER.debug("Current  snapshot: {}", new TreeMap<>(map));
-        int current = map.size();
-        map.keySet().retainAll(snapshot.keySet());
-        if (current == snapshot.size() && map.isEmpty()) {
-            LOGGER.info("All pods seem to have rolled");
-            return true;
-        } else {
-            LOGGER.debug("Some pods still need to roll: {}", map);
-            return false;
-        }
+    public static boolean depHasRolled(String name, Map<String, String> snapshot) {
+        return depHasRolled(kubeClient().getNamespace(), name, snapshot);
     }
 
     /**
      * Method to wait when Deployment will be recreated after rolling update
+     * @param namespaceName namespace name where pod of the deployment is located
      * @param name Deployment name
      * @param expectedPods Expected number of pods
      * @param snapshot Snapshot of pods for Deployment before the rolling update
      * @return The snapshot of the Deployment after rolling update with Uid for every pod
      */
-    public static Map<String, String> waitTillDepHasRolled(String name, int expectedPods, Map<String, String> snapshot) {
+    public static Map<String, String> waitTillDepHasRolled(String namespaceName, String name, int expectedPods, Map<String, String> snapshot) {
         LOGGER.info("Waiting for Deployment {} rolling update", name);
-        TestUtils.waitFor("Deployment " + name + " rolling update",
-            Constants.WAIT_FOR_ROLLING_UPDATE_INTERVAL, Constants.WAIT_FOR_ROLLING_UPDATE_TIMEOUT, () -> depHasRolled(name, snapshot));
-        waitForDeploymentReady(name);
-        PodUtils.waitForPodsReady(kubeClient().getDeployment(name).getSpec().getSelector(), expectedPods, true);
+        TestUtils.waitFor("Deployment " + name + " rolling update in namespace:" + namespaceName,
+            Constants.WAIT_FOR_ROLLING_UPDATE_INTERVAL, ResourceOperation.timeoutForPodsOperation(expectedPods), () -> depHasRolled(namespaceName, name, snapshot));
+        waitForDeploymentReady(namespaceName, name);
+        PodUtils.waitForPodsReady(namespaceName, kubeClient(namespaceName).getDeployment(namespaceName, name).getSpec().getSelector(), expectedPods, true);
         LOGGER.info("Deployment {} rolling update finished", name);
-        return depSnapshot(name);
+        return depSnapshot(namespaceName, name);
     }
 
-    /**
-     * Method to wait when DeploymentConfig will be recreated after rolling update
-     * @param clusterName DeploymentConfig name
-     * @param snapshot Snapshot of pods for DeploymentConfig before the rolling update
-     * @return The snapshot of the DeploymentConfig after rolling update with Uid for every pod
-     */
-    public static Map<String, String> waitTillDepConfigHasRolled(String clusterName, Map<String, String> snapshot) {
-        String name = KafkaConnectS2IResources.deploymentName(clusterName);
-        LOGGER.info("Waiting for DeploymentConfig {} rolling update", name);
-        TestUtils.waitFor("DeploymentConfig roll of " + name,
-            Constants.WAIT_FOR_ROLLING_UPDATE_INTERVAL, Constants.WAIT_FOR_ROLLING_UPDATE_TIMEOUT, () -> depConfigHasRolled(name, snapshot));
-        KafkaConnectS2IUtils.waitForConnectS2IStatus(clusterName, "Ready");
-        LOGGER.info("DeploymentConfig {} rolling update finished", name);
-        return depConfigSnapshot(name);
-    }
-
-    public static void waitForPodUpdate(String podName, Date startTime) {
-        TestUtils.waitFor(podName + " update", Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, Constants.TIMEOUT_FOR_RESOURCE_READINESS, () ->
-            startTime.before(kubeClient().getCreationTimestampForPod(podName))
-        );
+    public static Map<String, String> waitTillDepHasRolled(String name, int expectedPods, Map<String, String> snapshot) {
+        return waitTillDepHasRolled(kubeClient().getNamespace(), name, expectedPods, snapshot);
     }
 
     /**
@@ -143,143 +164,73 @@ public class DeploymentUtils {
      */
     public static void waitForDeploymentRecovery(String name, String deploymentUid) {
         LOGGER.info("Waiting for Deployment {}-{} recovery in namespace {}", name, deploymentUid, kubeClient().getNamespace());
-        TestUtils.waitFor("deployment " + name + " to be recovered", Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, Constants.TIMEOUT_FOR_RESOURCE_READINESS,
+        TestUtils.waitFor("deployment " + name + " to be recovered", Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, Constants.TIMEOUT_FOR_RESOURCE_RECOVERY,
             () -> !kubeClient().getDeploymentUid(name).equals(deploymentUid));
         LOGGER.info("Deployment {} was recovered", name);
     }
 
-    /**
-     * Wait until the given Deployment is ready.
-     * @param name The name of the Deployment.
-     */
-    public static void waitForDeploymentReady(String name) {
-        LOGGER.info("Waiting for Deployment {}", name);
-        TestUtils.waitFor("deployment " + name, Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, Constants.TIMEOUT_FOR_RESOURCE_READINESS,
-            () -> kubeClient().getDeploymentStatus(name),
-            () -> DeploymentUtils.logCurrentDeploymentStatus(kubeClient().getDeployment(name)));
-        LOGGER.info("Deployment {} is ready", name);
+    public static boolean waitForDeploymentReady(String namespaceName, String deploymentName) {
+        LOGGER.info("Wait for Deployment: {} will be ready", deploymentName);
+
+        TestUtils.waitFor(String.format("Wait for Deployment: %s will be ready", deploymentName),
+            Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, READINESS_TIMEOUT,
+            () -> kubeClient(namespaceName).getDeploymentStatus(namespaceName, deploymentName),
+            () -> DeploymentUtils.logCurrentDeploymentStatus(kubeClient(namespaceName).getDeployment(deploymentName), namespaceName));
+
+        LOGGER.info("Deployment: {} is ready", deploymentName);
+        return true;
+    }
+
+    public static boolean waitForDeploymentReady(String deploymentName) {
+        return waitForDeploymentReady(kubeClient().getNamespace(), deploymentName);
     }
 
     /**
      * Wait until the given Deployment is ready.
-     * @param name The name of the Deployment.
+     * @param deploymentName The name of the Deployment.
      * @param expectPods The expected number of pods.
      */
-    public static void waitForDeploymentAndPodsReady(String name, int expectPods) {
-        LOGGER.debug("Waiting for Deployment {}", name);
-        TestUtils.waitFor("deployment " + name + " pods to be ready", Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, Constants.TIMEOUT_FOR_RESOURCE_READINESS,
-            () -> kubeClient().getDeploymentStatus(name),
-            () -> DeploymentUtils.logCurrentDeploymentStatus(kubeClient().getDeployment(name)));
-        LOGGER.info("Waiting for {} Pod(s) of Deployment {} to be ready", expectPods, name);
-        PodUtils.waitForPodsReady(kubeClient().getDeploymentSelectors(name), expectPods, true,
-            () -> DeploymentUtils.logCurrentDeploymentStatus(kubeClient().getDeployment(name)));
-        LOGGER.info("Deployment {} is ready", name);
+    public static boolean waitForDeploymentAndPodsReady(String deploymentName, int expectPods) {
+        return waitForDeploymentAndPodsReady(kubeClient().getNamespace(), deploymentName, expectPods);
+    }
+
+    /**
+     * Wait until the given Deployment is ready.
+     * @param namespaceName name of the namespace
+     * @param deploymentName The name of the Deployment.
+     * @param expectPods The expected number of pods.
+     */
+    public static boolean waitForDeploymentAndPodsReady(String namespaceName, String deploymentName, int expectPods) {
+        waitForDeploymentReady(namespaceName, deploymentName);
+
+        LOGGER.info("Waiting for {} Pod(s) of Deployment {} to be ready", expectPods, deploymentName);
+        PodUtils.waitForPodsReady(namespaceName, kubeClient(namespaceName).getDeploymentSelectors(namespaceName, deploymentName), expectPods, true,
+            () -> DeploymentUtils.logCurrentDeploymentStatus(kubeClient(namespaceName).getDeployment(namespaceName, deploymentName), namespaceName));
+        LOGGER.info("Deployment {} is ready", deploymentName);
+        return true;
     }
 
     /**
      * Wait until the given Deployment has been deleted.
+     * @param namespaceName Namespace name
      * @param name The name of the Deployment.
      */
-    public static void waitForDeploymentDeletion(String name) {
+    public static void waitForDeploymentDeletion(String namespaceName, String name) {
         LOGGER.debug("Waiting for Deployment {} deletion", name);
-        TestUtils.waitFor("Deployment " + name + " to be deleted", Constants.POLL_INTERVAL_FOR_RESOURCE_DELETION, Constants.TIMEOUT_FOR_RESOURCE_DELETION,
+        TestUtils.waitFor("Deployment " + name + " to be deleted", Constants.POLL_INTERVAL_FOR_RESOURCE_DELETION, DELETION_TIMEOUT,
             () -> {
-                if (kubeClient().getDeployment(name) == null) {
+                if (kubeClient(namespaceName).getDeployment(namespaceName, name) == null) {
                     return true;
                 } else {
                     LOGGER.warn("Deployment {} is not deleted yet! Triggering force delete by cmd client!", name);
-                    cmdKubeClient().deleteByName("deployment", name);
+                    cmdKubeClient(namespaceName).deleteByName(Constants.DEPLOYMENT, name);
                     return false;
                 }
             });
         LOGGER.debug("Deployment {} was deleted", name);
     }
 
-    /**
-     * Wait until the given DeploymentConfig has been deleted.
-     * @param name The name of the DeploymentConfig.
-     */
-    public static void waitForDeploymentConfigDeletion(String name) {
-        LOGGER.debug("Waiting for DeploymentConfig {} deletion", name);
-        TestUtils.waitFor("DeploymentConfig " + name + " to be deleted", Constants.POLL_INTERVAL_FOR_RESOURCE_DELETION, Constants.TIMEOUT_FOR_RESOURCE_DELETION,
-            () -> {
-                if (kubeClient().getDeploymentConfig(name) == null) {
-                    return true;
-                } else {
-                    LOGGER.warn("Deployment {} is not deleted yet! Triggering force delete by cmd client!", name);
-                    cmdKubeClient().deleteByName("deploymentconfig", name);
-                    return false;
-                }
-            });
-        LOGGER.debug("DeploymentConfig {} was deleted", name);
-    }
-
-    public static void waitForNoRollingUpdate(String deploymentName, Map<String, String> pods) {
-        // alternative to sync hassling AtomicInteger one could use an integer array instead
-        // not need to be final because reference to the array does not get another array assigned
-        int[] i = {0};
-
-        TestUtils.waitFor("stability of rolling update will be not triggered", Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_TIMEOUT,
-            () -> {
-                if (!DeploymentUtils.depHasRolled(deploymentName, pods)) {
-                    LOGGER.info("{} pods not rolling waiting, remaining seconds for stability {}", pods.toString(),
-                            Constants.GLOBAL_RECONCILIATION_COUNT - i[0]);
-                    return i[0]++ == Constants.GLOBAL_RECONCILIATION_COUNT;
-                } else {
-                    throw new RuntimeException(pods.toString() + " pods are rolling!");
-                }
-            }
-        );
-    }
-
-    /**
-     * Wait until the given DeploymentConfig is ready.
-     * @param name The name of the DeploymentConfig.
-     */
-    public static Map<String, String> waitForDeploymentConfigReady(String name, int expectPods) {
-        LOGGER.info("Waiting until DeploymentConfig {} is ready", name);
-        TestUtils.waitFor("DeploymentConfig " + name + " to be ready", Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, Constants.TIMEOUT_FOR_RESOURCE_READINESS,
-            () -> kubeClient().getDeploymentConfigStatus(name));
-
-        LOGGER.info("Waiting for Pod(s) of DeploymentConfig {} to be ready", name);
-        LabelSelector deploymentConfigSelector =
-                new LabelSelectorBuilder().addToMatchLabels(kubeClient().getDeploymentConfigSelectors(name)).build();
-        PodUtils.waitForPodsReady(deploymentConfigSelector, expectPods, true);
-        LOGGER.info("DeploymentConfig {} is ready", name);
-        return depConfigSnapshot(name);
-    }
-
-    /**
-     * Log actual status of deployment with pods
-     * @param deployment - every DoneableDeployment, that HasMetadata and has status (fabric8 status)
-     **/
-    public static void logCurrentDeploymentStatus(Deployment deployment) {
-        String kind = deployment.getKind();
-        String name = deployment.getMetadata().getName();
-
-        List<String> log = new ArrayList<>(asList("\n", kind, " status:\n", "\nConditions:\n"));
-
-        for (DeploymentCondition deploymentCondition : deployment.getStatus().getConditions()) {
-            log.add("\tType: " + deploymentCondition.getType() + "\n");
-            log.add("\tMessage: " + deploymentCondition.getMessage() + "\n");
-        }
-
-        if (kubeClient().listPodsByPrefixInName(name).size() != 0) {
-            log.add("\nPods with conditions and messages:\n\n");
-
-            for (Pod pod : kubeClient().listPodsByPrefixInName(name)) {
-                log.add(pod.getMetadata().getName() + ":");
-                for (PodCondition podCondition : pod.getStatus().getConditions()) {
-                    if (podCondition.getMessage() != null) {
-                        log.add("\n\tType: " + podCondition.getType() + "\n");
-                        log.add("\tMessage: " + podCondition.getMessage() + "\n");
-                    }
-                }
-                log.add("\n\n");
-            }
-            LOGGER.info("{}", String.join("", log));
-        }
-
-        LOGGER.info("{}", String.join("", log));
+    public static void waitForDeploymentDeletion(String name) {
+        waitForDeploymentDeletion(kubeClient().getNamespace(), name);
     }
 }

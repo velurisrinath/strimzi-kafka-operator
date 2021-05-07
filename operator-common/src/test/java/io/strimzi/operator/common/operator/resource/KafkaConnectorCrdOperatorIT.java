@@ -4,13 +4,11 @@
  */
 package io.strimzi.operator.common.operator.resource;
 
-import io.fabric8.kubernetes.api.model.apiextensions.CustomResourceDefinition;
 import io.fabric8.kubernetes.client.KubernetesClient;
-import io.strimzi.api.kafka.Crds;
 import io.strimzi.api.kafka.KafkaConnectorList;
-import io.strimzi.api.kafka.model.DoneableKafkaConnector;
 import io.strimzi.api.kafka.model.KafkaConnector;
 import io.strimzi.api.kafka.model.KafkaConnectorBuilder;
+import io.strimzi.test.TestUtils;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import org.apache.logging.log4j.LogManager;
@@ -27,17 +25,22 @@ import static org.hamcrest.MatcherAssert.assertThat;
  * test them against real clusters.
  */
 @ExtendWith(VertxExtension.class)
-public class KafkaConnectorCrdOperatorIT extends AbstractCustomResourceOperatorIT<KubernetesClient, KafkaConnector, KafkaConnectorList, DoneableKafkaConnector> {
+public class KafkaConnectorCrdOperatorIT extends AbstractCustomResourceOperatorIT<KubernetesClient, KafkaConnector, KafkaConnectorList> {
     protected static final Logger log = LogManager.getLogger(KafkaConnectorCrdOperatorIT.class);
 
     @Override
     protected CrdOperator operator() {
-        return new CrdOperator(vertx, client, KafkaConnector.class, KafkaConnectorList.class, DoneableKafkaConnector.class, Crds.kafkaConnector());
+        return new CrdOperator(vertx, client, KafkaConnector.class, KafkaConnectorList.class, KafkaConnector.RESOURCE_KIND);
     }
 
     @Override
-    protected CustomResourceDefinition getCrd() {
-        return Crds.kafkaConnector();
+    protected String getCrd() {
+        return TestUtils.CRD_KAFKA_CONNECTOR;
+    }
+
+    @Override
+    protected String getCrdName() {
+        return KafkaConnector.CRD_NAME;
     }
 
     @Override
@@ -46,11 +49,10 @@ public class KafkaConnectorCrdOperatorIT extends AbstractCustomResourceOperatorI
     }
 
     @Override
-    protected KafkaConnector getResource() {
+    protected KafkaConnector getResource(String resourceName) {
         return new KafkaConnectorBuilder()
-                .withApiVersion(KafkaConnector.RESOURCE_GROUP + "/" + KafkaConnector.V1ALPHA1)
                 .withNewMetadata()
-                    .withName(RESOURCE_NAME)
+                    .withName(resourceName)
                     .withNamespace(getNamespace())
                 .endMetadata()
                 .withNewSpec()

@@ -17,6 +17,7 @@ import io.strimzi.operator.cluster.operator.assembly.KafkaConnectAssemblyOperato
 import io.strimzi.operator.cluster.operator.assembly.KafkaConnectS2IAssemblyOperator;
 import io.strimzi.operator.cluster.operator.assembly.KafkaMirrorMakerAssemblyOperator;
 import io.strimzi.operator.cluster.operator.assembly.KafkaMirrorMaker2AssemblyOperator;
+import io.strimzi.operator.cluster.operator.assembly.KafkaRebalanceAssemblyOperator;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.common.PasswordGenerator;
 import io.strimzi.operator.common.Util;
@@ -58,6 +59,7 @@ public class Main {
     public static void main(String[] args) {
         log.info("ClusterOperator {} is starting", Main.class.getPackage().getImplementationVersion());
         ClusterOperatorConfig config = ClusterOperatorConfig.fromMap(System.getenv());
+        log.info("Cluster Operator configuration is {}", config);
 
         String dnsCacheTtl = System.getenv("STRIMZI_DNS_CACHE_TTL") == null ? "30" : System.getenv("STRIMZI_DNS_CACHE_TTL");
         Security.setProperty("networkaddress.cache.ttl", dnsCacheTtl);
@@ -66,17 +68,19 @@ public class Main {
         VertxOptions options = new VertxOptions().setMetricsOptions(
                 new MicrometerMetricsOptions()
                         .setPrometheusOptions(new VertxPrometheusOptions().setEnabled(true))
+                        .setJvmMetricsEnabled(true)
                         .setEnabled(true));
         Vertx vertx = Vertx.vertx(options);
+        
         KubernetesClient client = new DefaultKubernetesClient();
 
-        maybeCreateClusterRoles(vertx, config, client).setHandler(crs -> {
+        maybeCreateClusterRoles(vertx, config, client).onComplete(crs -> {
             if (crs.succeeded())    {
-                PlatformFeaturesAvailability.create(vertx, client).setHandler(pfa -> {
+                PlatformFeaturesAvailability.create(vertx, client).onComplete(pfa -> {
                     if (pfa.succeeded()) {
                         log.info("Environment facts gathered: {}", pfa.result());
 
-                        run(vertx, client, pfa.result(), config).setHandler(ar -> {
+                        run(vertx, client, pfa.result(), config).onComplete(ar -> {
                             if (ar.failed()) {
                                 log.error("Unable to start operator for 1 or more namespace", ar.cause());
                                 System.exit(1);
@@ -127,12 +131,15 @@ public class Main {
         KafkaBridgeAssemblyOperator kafkaBridgeAssemblyOperator =
                 new KafkaBridgeAssemblyOperator(vertx, pfa, certManager, passwordGenerator, resourceOperatorSupplier, config);
 
-        List<Future> futures = new ArrayList<>();
+        KafkaRebalanceAssemblyOperator kafkaRebalanceAssemblyOperator =
+                new KafkaRebalanceAssemblyOperator(vertx, pfa, resourceOperatorSupplier, config);
+
+        List<Future> futures = new ArrayList<>(config.getNamespaces().size());
         for (String namespace : config.getNamespaces()) {
             Promise<String> prom = Promise.promise();
             futures.add(prom.future());
             ClusterOperator operator = new ClusterOperator(namespace,
-                    config.getReconciliationIntervalMs(),
+                    config,
                     client,
                     kafkaClusterOperations,
                     kafkaConnectClusterOperations,
@@ -140,11 +147,12 @@ public class Main {
                     kafkaMirrorMakerAssemblyOperator,
                     kafkaMirrorMaker2AssemblyOperator,
                     kafkaBridgeAssemblyOperator,
+                    kafkaRebalanceAssemblyOperator,
                     resourceOperatorSupplier.metricsProvider);
             vertx.deployVerticle(operator,
                 res -> {
                     if (res.succeeded()) {
-                        log.info("Cluster Operator verticle started in namespace {}", namespace);
+                        log.info("Cluster Operator verticle started in namespace {} with label selector {}", namespace, config.getCustomResourceSelector());
                     } else {
                         log.error("Cluster Operator verticle in namespace {} failed to start", namespace, res.cause());
                         System.exit(1);
@@ -158,17 +166,15 @@ public class Main {
     /*test*/ static Future<Void> maybeCreateClusterRoles(Vertx vertx, ClusterOperatorConfig config, KubernetesClient client)  {
         if (config.isCreateClusterRoles()) {
             List<Future> futures = new ArrayList<>();
-            ClusterRoleOperator cro = new ClusterRoleOperator(vertx, client, config.getOperationTimeoutMs());
+            ClusterRoleOperator cro = new ClusterRoleOperator(vertx, client);
 
-            Map<String, String> clusterRoles = new HashMap<String, String>() {
-                {
-                    put("strimzi-cluster-operator-namespaced", "020-ClusterRole-strimzi-cluster-operator-role.yaml");
-                    put("strimzi-cluster-operator-global", "021-ClusterRole-strimzi-cluster-operator-role.yaml");
-                    put("strimzi-kafka-broker", "030-ClusterRole-strimzi-kafka-broker.yaml");
-                    put("strimzi-entity-operator", "031-ClusterRole-strimzi-entity-operator.yaml");
-                    put("strimzi-topic-operator", "032-ClusterRole-strimzi-topic-operator.yaml");
-                }
-            };
+            Map<String, String> clusterRoles = new HashMap<>(6);
+            clusterRoles.put("strimzi-cluster-operator-namespaced", "020-ClusterRole-strimzi-cluster-operator-role.yaml");
+            clusterRoles.put("strimzi-cluster-operator-global", "021-ClusterRole-strimzi-cluster-operator-role.yaml");
+            clusterRoles.put("strimzi-kafka-broker", "030-ClusterRole-strimzi-kafka-broker.yaml");
+            clusterRoles.put("strimzi-entity-operator", "031-ClusterRole-strimzi-entity-operator.yaml");
+            clusterRoles.put("strimzi-topic-operator", "032-ClusterRole-strimzi-topic-operator.yaml");
+            clusterRoles.put("strimzi-kafka-client", "033-ClusterRole-strimzi-kafka-client.yaml");
 
             for (Map.Entry<String, String> clusterRole : clusterRoles.entrySet()) {
                 log.info("Creating cluster role {}", clusterRole.getKey());
@@ -177,7 +183,7 @@ public class Main {
                         new InputStreamReader(Main.class.getResourceAsStream("/cluster-roles/" + clusterRole.getValue()),
                                 StandardCharsets.UTF_8))) {
                     String yaml = br.lines().collect(Collectors.joining(System.lineSeparator()));
-                    ClusterRole role = cro.convertYamlToClusterRole(yaml);
+                    ClusterRole role = ClusterRoleOperator.convertYamlToClusterRole(yaml);
                     Future fut = cro.reconcile(role.getMetadata().getName(), role);
                     futures.add(fut);
                 } catch (IOException e) {
@@ -188,7 +194,7 @@ public class Main {
             }
 
             Promise<Void> returnPromise = Promise.promise();
-            CompositeFuture.all(futures).setHandler(res -> {
+            CompositeFuture.all(futures).onComplete(res -> {
                 if (res.succeeded())    {
                     returnPromise.complete();
                 } else  {

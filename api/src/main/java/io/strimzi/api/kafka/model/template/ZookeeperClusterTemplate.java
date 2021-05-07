@@ -6,9 +6,11 @@ package io.strimzi.api.kafka.model.template;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import io.strimzi.api.annotations.DeprecatedProperty;
 import io.strimzi.api.kafka.model.Constants;
 import io.strimzi.api.kafka.model.UnknownPropertyPreserving;
 import io.strimzi.crdgenerator.annotations.Description;
+import io.strimzi.crdgenerator.annotations.PresentInVersions;
 import io.sundr.builder.annotations.Buildable;
 import lombok.EqualsAndHashCode;
 
@@ -33,8 +35,8 @@ public class ZookeeperClusterTemplate implements Serializable, UnknownPropertyPr
 
     private StatefulSetTemplate statefulset;
     private PodTemplate pod;
-    private ResourceTemplate clientService;
-    private ResourceTemplate nodesService;
+    private InternalServiceTemplate clientService;
+    private InternalServiceTemplate nodesService;
     private ResourceTemplate persistentVolumeClaim;
     private PodDisruptionBudgetTemplate podDisruptionBudget;
     private ContainerTemplate zookeeperContainer;
@@ -63,21 +65,21 @@ public class ZookeeperClusterTemplate implements Serializable, UnknownPropertyPr
 
     @Description("Template for ZooKeeper client `Service`.")
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
-    public ResourceTemplate getClientService() {
+    public InternalServiceTemplate getClientService() {
         return clientService;
     }
 
-    public void setClientService(ResourceTemplate clientService) {
+    public void setClientService(InternalServiceTemplate clientService) {
         this.clientService = clientService;
     }
 
     @Description("Template for ZooKeeper nodes `Service`.")
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
-    public ResourceTemplate getNodesService() {
+    public InternalServiceTemplate getNodesService() {
         return nodesService;
     }
 
-    public void setNodesService(ResourceTemplate nodesService) {
+    public void setNodesService(InternalServiceTemplate nodesService) {
         this.nodesService = nodesService;
     }
 
@@ -111,7 +113,11 @@ public class ZookeeperClusterTemplate implements Serializable, UnknownPropertyPr
         this.zookeeperContainer = zookeeperContainer;
     }
 
-    @Description("Template for the Kafka broker TLS sidecar container")
+    @PresentInVersions("v1alpha1-v1beta1")
+    @DeprecatedProperty(removalVersion = "v1beta2")
+    @Deprecated
+    @Description("Template for the Zookeeper server TLS sidecar container. " +
+            "The TLS sidecar is not used anymore and this option will be ignored.")
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
     public ContainerTemplate getTlsSidecarContainer() {
         return tlsSidecarContainer;

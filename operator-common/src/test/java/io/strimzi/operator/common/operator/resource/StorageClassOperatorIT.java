@@ -4,7 +4,6 @@
  */
 package io.strimzi.operator.common.operator.resource;
 
-import io.fabric8.kubernetes.api.model.storage.DoneableStorageClass;
 import io.fabric8.kubernetes.api.model.storage.StorageClass;
 import io.fabric8.kubernetes.api.model.storage.StorageClassBuilder;
 import io.fabric8.kubernetes.api.model.storage.StorageClassList;
@@ -20,18 +19,18 @@ import static org.hamcrest.MatcherAssert.assertThat;
 
 @ExtendWith(VertxExtension.class)
 public class StorageClassOperatorIT extends AbstractNonNamespacedResourceOperatorIT<KubernetesClient,
-        StorageClass, StorageClassList, DoneableStorageClass, Resource<StorageClass, DoneableStorageClass>> {
+        StorageClass, StorageClassList, Resource<StorageClass>> {
 
     @Override
-    protected AbstractNonNamespacedResourceOperator<KubernetesClient, StorageClass, StorageClassList, DoneableStorageClass, Resource<StorageClass, DoneableStorageClass>> operator() {
-        return new StorageClassOperator(vertx, client, 10_000);
+    protected AbstractNonNamespacedResourceOperator<KubernetesClient, StorageClass, StorageClassList, Resource<StorageClass>> operator() {
+        return new StorageClassOperator(vertx, client);
     }
 
     @Override
     protected StorageClass getOriginal()  {
         return new StorageClassBuilder()
                 .withNewMetadata()
-                    .withName(RESOURCE_NAME)
+                    .withName(resourceName)
                     .withLabels(singletonMap("state", "new"))
                 .endMetadata()
                 .withReclaimPolicy("Delete")
@@ -46,7 +45,7 @@ public class StorageClassOperatorIT extends AbstractNonNamespacedResourceOperato
         // Most of the fields seem to be immutable, we patch only labels
         return new StorageClassBuilder()
                 .withNewMetadata()
-                    .withName(RESOURCE_NAME)
+                    .withName(resourceName)
                     .withLabels(singletonMap("state", "modified"))
                 .endMetadata()
                 .withReclaimPolicy("Delete")

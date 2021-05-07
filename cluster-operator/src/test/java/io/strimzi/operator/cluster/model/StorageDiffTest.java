@@ -9,13 +9,15 @@ import io.strimzi.api.kafka.model.storage.JbodStorageBuilder;
 import io.strimzi.api.kafka.model.storage.PersistentClaimStorageBuilder;
 import io.strimzi.api.kafka.model.storage.PersistentClaimStorageOverrideBuilder;
 import io.strimzi.api.kafka.model.storage.Storage;
-import org.junit.jupiter.api.Test;
+import io.strimzi.test.annotations.ParallelSuite;
+import io.strimzi.test.annotations.ParallelTest;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 
+@ParallelSuite
 public class StorageDiffTest {
-    @Test
+    @ParallelTest
     public void testJbodDiff()    {
         Storage jbod = new JbodStorageBuilder().withVolumes(
                 new PersistentClaimStorageBuilder().withStorageClass("gp2-ssd").withDeleteClaim(false).withId(0).withSize("100Gi").build(),
@@ -31,14 +33,16 @@ public class StorageDiffTest {
         assertThat(diff.changesType(), is(false));
         assertThat(diff.isEmpty(), is(true));
         assertThat(diff.shrinkSize(), is(false));
+        assertThat(diff.isVolumesAddedOrRemoved(), is(false));
 
         diff = new StorageDiff(jbod, jbod2, 3, 3);
         assertThat(diff.changesType(), is(false));
         assertThat(diff.isEmpty(), is(false));
         assertThat(diff.shrinkSize(), is(false));
+        assertThat(diff.isVolumesAddedOrRemoved(), is(false));
     }
 
-    @Test
+    @ParallelTest
     public void testPersistentDiff()    {
         Storage persistent = new PersistentClaimStorageBuilder().withStorageClass("gp2-ssd").withDeleteClaim(false).withId(0).withSize("100Gi").build();
         Storage persistent2 = new PersistentClaimStorageBuilder().withStorageClass("gp2-st1").withDeleteClaim(false).withId(0).withSize("1000Gi").build();
@@ -52,7 +56,7 @@ public class StorageDiffTest {
         assertThat(new StorageDiff(persistent, persistent2, 3, 3).shrinkSize(), is(false));
     }
 
-    @Test
+    @ParallelTest
     public void testPersistentDiffWithOverrides()    {
         Storage persistent = new PersistentClaimStorageBuilder()
                 .withStorageClass("gp2-ssd")
@@ -94,7 +98,7 @@ public class StorageDiffTest {
         assertThat(new StorageDiff(persistent2, persistent3, 3, 3).shrinkSize(), is(false));
     }
 
-    @Test
+    @ParallelTest
     public void testSizeChanges()    {
         Storage persistent = new PersistentClaimStorageBuilder().withStorageClass("gp2-ssd").withDeleteClaim(false).withId(0).withSize("100Gi").build();
         Storage persistent2 = new PersistentClaimStorageBuilder().withStorageClass("gp2-ssd").withDeleteClaim(false).withId(0).withSize("1000Gi").build();
@@ -105,7 +109,7 @@ public class StorageDiffTest {
         assertThat(new StorageDiff(persistent, persistent3, 3, 3).shrinkSize(), is(true));
     }
 
-    @Test
+    @ParallelTest
     public void testEphemeralDiff()    {
         Storage ephemeral = new EphemeralStorageBuilder().build();
 
@@ -114,7 +118,7 @@ public class StorageDiffTest {
         assertThat(new StorageDiff(ephemeral, ephemeral, 3, 3).shrinkSize(), is(false));
     }
 
-    @Test
+    @ParallelTest
     public void testCrossDiff()    {
         Storage jbod = new JbodStorageBuilder().withVolumes(
                 new PersistentClaimStorageBuilder().withStorageClass("gp2-ssd").withDeleteClaim(false).withId(0).withSize("100Gi").build(),
@@ -127,18 +131,22 @@ public class StorageDiffTest {
 
         StorageDiff diffJbodEphemeral = new StorageDiff(jbod, ephemeral, 3, 3);
         StorageDiff diffPersistentEphemeral = new StorageDiff(persistent, ephemeral, 3, 3);
-        StorageDiff fiddJbodPersistent = new StorageDiff(jbod, persistent, 3, 3);
+        StorageDiff diffJbodPersistent = new StorageDiff(jbod, persistent, 3, 3);
 
         assertThat(diffJbodEphemeral.changesType(), is(true));
         assertThat(diffPersistentEphemeral.changesType(), is(true));
-        assertThat(fiddJbodPersistent.changesType(), is(true));
+        assertThat(diffJbodPersistent.changesType(), is(true));
 
         assertThat(diffJbodEphemeral.isEmpty(), is(false));
         assertThat(diffPersistentEphemeral.isEmpty(), is(false));
-        assertThat(fiddJbodPersistent.isEmpty(), is(false));
+        assertThat(diffJbodPersistent.isEmpty(), is(false));
+
+        assertThat(diffJbodEphemeral.isVolumesAddedOrRemoved(), is(false));
+        assertThat(diffPersistentEphemeral.isVolumesAddedOrRemoved(), is(false));
+        assertThat(diffJbodPersistent.isVolumesAddedOrRemoved(), is(false));
     }
 
-    @Test
+    @ParallelTest
     public void testJbodDiffWithNewVolume()    {
         Storage jbod = new JbodStorageBuilder()
                 .withVolumes(new PersistentClaimStorageBuilder().withStorageClass("gp2-ssd").withDeleteClaim(false).withId(0).withSize("1000Gi").build())
@@ -172,51 +180,66 @@ public class StorageDiffTest {
         assertThat(diff.changesType(), is(false));
         assertThat(diff.isEmpty(), is(true));
         assertThat(diff.shrinkSize(), is(false));
+        assertThat(diff.isVolumesAddedOrRemoved(), is(true));
 
         // Volume removed
         diff = new StorageDiff(jbod2, jbod, 3, 3);
         assertThat(diff.changesType(), is(false));
         assertThat(diff.isEmpty(), is(true));
         assertThat(diff.shrinkSize(), is(false));
+        assertThat(diff.isVolumesAddedOrRemoved(), is(true));
 
         // Volume added with changes
         diff = new StorageDiff(jbod, jbod3, 3, 3);
         assertThat(diff.changesType(), is(false));
         assertThat(diff.isEmpty(), is(false));
         assertThat(diff.shrinkSize(), is(true));
+        assertThat(diff.isVolumesAddedOrRemoved(), is(true));
+
+        // No volume added, but with changes
+        diff = new StorageDiff(jbod2, jbod3, 3, 3);
+        assertThat(diff.changesType(), is(false));
+        assertThat(diff.isEmpty(), is(false));
+        assertThat(diff.shrinkSize(), is(true));
+        assertThat(diff.isVolumesAddedOrRemoved(), is(false));
 
         // Volume removed from the beginning
         diff = new StorageDiff(jbod3, jbod5, 3, 3);
         assertThat(diff.changesType(), is(false));
         assertThat(diff.isEmpty(), is(true));
         assertThat(diff.shrinkSize(), is(false));
+        assertThat(diff.isVolumesAddedOrRemoved(), is(true));
 
         // Volume added to the beginning
         diff = new StorageDiff(jbod5, jbod3, 3, 3);
         assertThat(diff.changesType(), is(false));
         assertThat(diff.isEmpty(), is(true));
         assertThat(diff.shrinkSize(), is(false));
+        assertThat(diff.isVolumesAddedOrRemoved(), is(true));
 
         // Volume replaced with another ID and another volume which is kept changed
         diff = new StorageDiff(jbod3, jbod6, 3, 3);
         assertThat(diff.changesType(), is(false));
         assertThat(diff.isEmpty(), is(false));
         assertThat(diff.shrinkSize(), is(false));
+        assertThat(diff.isVolumesAddedOrRemoved(), is(true));
 
         // Volume replaced with another ID in single volume broker
         diff = new StorageDiff(jbod, jbod4, 3, 3);
         assertThat(diff.changesType(), is(false));
         assertThat(diff.isEmpty(), is(true));
         assertThat(diff.shrinkSize(), is(false));
+        assertThat(diff.isVolumesAddedOrRemoved(), is(true));
 
         // Volume replaced with another ID without chenging the volumes which are kept
         diff = new StorageDiff(jbod2, jbod6, 3, 3);
         assertThat(diff.changesType(), is(false));
         assertThat(diff.isEmpty(), is(true));
         assertThat(diff.shrinkSize(), is(false));
+        assertThat(diff.isVolumesAddedOrRemoved(), is(true));
     }
 
-    @Test
+    @ParallelTest
     public void testSizeChangesInJbod()    {
         Storage jbod = new JbodStorageBuilder().withVolumes(
                 new PersistentClaimStorageBuilder().withStorageClass("gp2-ssd").withDeleteClaim(false).withId(0).withSize("1000Gi").build(),
@@ -238,7 +261,7 @@ public class StorageDiffTest {
         assertThat(new StorageDiff(jbod, jbod3, 3, 3).shrinkSize(), is(true));
     }
 
-    @Test
+    @ParallelTest
     public void testPersistentDiffWithOverridesChangesToExistingOverrides()    {
         Storage persistent = new PersistentClaimStorageBuilder()
                 .withStorageClass("gp2-ssd")
@@ -289,7 +312,7 @@ public class StorageDiffTest {
         assertThat(new StorageDiff(persistent, persistent2, 2, 1).isEmpty(), is(true));
     }
 
-    @Test
+    @ParallelTest
     public void testPersistentDiffWithOverridesBeingAdded()    {
         Storage persistent = new PersistentClaimStorageBuilder()
                 .withStorageClass("gp2-ssd")
@@ -346,7 +369,7 @@ public class StorageDiffTest {
         assertThat(new StorageDiff(persistent2, persistent3, 1, 1).isEmpty(), is(true));
     }
 
-    @Test
+    @ParallelTest
     public void testPersistentDiffWithOverridesBeingRemoved()    {
         Storage persistent = new PersistentClaimStorageBuilder()
                 .withStorageClass("gp2-ssd")
@@ -403,7 +426,7 @@ public class StorageDiffTest {
         assertThat(new StorageDiff(persistent3, persistent2, 1, 1).isEmpty(), is(true));
     }
 
-    @Test
+    @ParallelTest
     public void testPersistentDiffWithOverridesBeingAddedAndRemoved()    {
         Storage persistent = new PersistentClaimStorageBuilder()
                 .withStorageClass("gp2-ssd")

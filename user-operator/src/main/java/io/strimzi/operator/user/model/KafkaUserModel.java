@@ -21,6 +21,7 @@ import io.strimzi.certs.CertManager;
 import io.strimzi.certs.OpenSslCertManager;
 import io.strimzi.operator.cluster.model.ClientsCa;
 import io.strimzi.operator.cluster.model.InvalidResourceException;
+import io.strimzi.operator.common.Util;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.user.UserOperatorConfig;
 import io.strimzi.operator.user.model.acl.SimpleAclRule;
@@ -44,6 +45,7 @@ public class KafkaUserModel {
     private static final Logger log = LogManager.getLogger(KafkaUserModel.class.getName());
 
     public static final String KEY_PASSWORD = "password";
+    public static final String KEY_SASL_JAAS_CONFIG = "sasl.jaas.config";
 
     protected final String namespace;
     protected final String name;
@@ -66,21 +68,26 @@ public class KafkaUserModel {
     private String ownerUid;
 
     private KafkaUserQuotas quotas;
+    private Map<String, String> templateSecretLabels;
+    private Map<String, String> templateSecretAnnotations;
+
+    private final String secretPrefix;
 
     /**
      * Constructor
      *
-     * @param namespace Kubernetes/OpenShift namespace where Kafka Connect cluster resources are going to be created
+     * @param namespace Kubernetes namespace where Kafka Connect cluster resources are going to be created
      * @param name   User name
      * @param labels   Labels
      */
-    protected KafkaUserModel(String namespace, String name, Labels labels) {
+    protected KafkaUserModel(String namespace, String name, Labels labels, String secretPrefix) {
         this.namespace = namespace;
         this.name = name;
         this.labels = labels.withKubernetesName(KAFKA_USER_OPERATOR_NAME)
             .withKubernetesInstance(name)
             .withKubernetesPartOf(name)
             .withKubernetesManagedBy(KAFKA_USER_OPERATOR_NAME);
+        this.secretPrefix = secretPrefix;
     }
 
     /**
@@ -92,6 +99,7 @@ public class KafkaUserModel {
      * @param clientsCaCert The clients CA certificate Secret.
      * @param clientsCaKey The clients CA key Secret.
      * @param userSecret Kubernetes secret with existing user certificate.
+     * @param secretPrefix The prefix used to add to the name of the Secret generated from the KafkaUser resource.
      * @return The user model.
      */
     public static KafkaUserModel fromCrd(CertManager certManager,
@@ -99,10 +107,11 @@ public class KafkaUserModel {
                                          KafkaUser kafkaUser,
                                          Secret clientsCaCert,
                                          Secret clientsCaKey,
-                                         Secret userSecret) {
+                                         Secret userSecret, String secretPrefix) {
         KafkaUserModel result = new KafkaUserModel(kafkaUser.getMetadata().getNamespace(),
                 kafkaUser.getMetadata().getName(),
-                Labels.fromResource(kafkaUser).withStrimziKind(kafkaUser.getKind()));
+                Labels.fromResource(kafkaUser).withStrimziKind(kafkaUser.getKind()),
+                secretPrefix);
         result.setOwnerReference(kafkaUser);
         result.setAuthentication(kafkaUser.getSpec().getAuthentication());
 
@@ -123,6 +132,13 @@ public class KafkaUserModel {
         }
         result.setQuotas(kafkaUser.getSpec().getQuotas());
 
+        if (kafkaUser.getSpec().getTemplate() != null
+                && kafkaUser.getSpec().getTemplate().getSecret() != null
+                && kafkaUser.getSpec().getTemplate().getSecret().getMetadata() != null)  {
+            result.templateSecretLabels = kafkaUser.getSpec().getTemplate().getSecret().getMetadata().getLabels();
+            result.templateSecretAnnotations = kafkaUser.getSpec().getTemplate().getSecret().getMetadata().getAnnotations();
+        }
+
         return result;
     }
 
@@ -134,7 +150,7 @@ public class KafkaUserModel {
      */
     public Secret generateSecret()  {
         if (authentication instanceof KafkaUserTlsClientAuthentication) {
-            Map<String, String> data = new HashMap<>();
+            Map<String, String> data = new HashMap<>(5);
             data.put("ca.crt", caCert);
             data.put("user.key", userCertAndKey.keyAsBase64String());
             data.put("user.crt", userCertAndKey.certAsBase64String());
@@ -142,8 +158,9 @@ public class KafkaUserModel {
             data.put("user.password", userCertAndKey.storePasswordAsBase64String());
             return createSecret(data);
         } else if (authentication instanceof KafkaUserScramSha512ClientAuthentication) {
-            Map<String, String> data = new HashMap<>();
-            data.put(KafkaUserModel.KEY_PASSWORD, Base64.getEncoder().encodeToString(scramSha512Password.getBytes(StandardCharsets.US_ASCII)));
+            Map<String, String> data = new HashMap<>(2);
+            data.put(KafkaUserModel.KEY_PASSWORD, Base64.getEncoder().encodeToString(this.scramSha512Password.getBytes(StandardCharsets.US_ASCII)));
+            data.put(KafkaUserModel.KEY_SASL_JAAS_CONFIG, Base64.getEncoder().encodeToString(getSaslJsonConfig().getBytes(StandardCharsets.US_ASCII)));
             return createSecret(data);
         } else {
             return null;
@@ -193,7 +210,8 @@ public class KafkaUserModel {
                         && userCrt != null
                         && !userCrt.isEmpty()
                         && userKey != null
-                        && !userKey.isEmpty()) {
+                        && !userKey.isEmpty()
+                        && !clientsCa.isExpiring(userSecret, "user.crt")) {
 
                     if (userKeyStore != null
                             && !userKeyStore.isEmpty()
@@ -207,7 +225,6 @@ public class KafkaUserModel {
                                 decodeFromSecret(userSecret, "user.p12"),
                                 new String(decodeFromSecret(userSecret, "user.password"), StandardCharsets.US_ASCII));
                     } else {
-
                         // coming from an older operator version, the user secret exists but without keystore and password
                         try {
                             this.userCertAndKey = clientsCa.addKeyAndCertToKeyStore(name,
@@ -269,7 +286,8 @@ public class KafkaUserModel {
                 .withNewMetadata()
                     .withName(getSecretName())
                     .withNamespace(namespace)
-                    .withLabels(labels.toMap())
+                    .withLabels(Util.mergeLabelsOrAnnotations(labels.toMap(), templateSecretLabels))
+                    .withAnnotations(Util.mergeLabelsOrAnnotations(null, templateSecretAnnotations))
                     .withOwnerReferences(createOwnerReference())
                 .endMetadata()
                 .withData(data)
@@ -370,11 +388,23 @@ public class KafkaUserModel {
     /**
      * Generates the name of the User secret based on the username.
      *
+     * @param secretPrefix The secret prefix
      * @param username The username.
      * @return The name of the user.
      */
-    public static String getSecretName(String username)    {
-        return username;
+    public static String getSecretName(String secretPrefix, String username)    {
+        return secretPrefix + username;
+    }
+
+    /**
+     * Creates the JAAS configuration string for SASL SCRAM-SHA-512 authentication.
+     *
+     * @param username The SCRAM username.
+     * @param password The SCRAM password.
+     * @return The JAAS configuration string.
+     */
+    public static String getSaslJsonConfig(String username, String password) {
+        return "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"" + username + "\" password=\"" + password + "\";";
     }
 
     /**
@@ -383,7 +413,7 @@ public class KafkaUserModel {
      * @return The name of the user secret.
      */
     public String getSecretName()    {
-        return KafkaUserModel.getSecretName(name);
+        return KafkaUserModel.getSecretName(secretPrefix, name);
     }
 
     /**
@@ -465,4 +495,14 @@ public class KafkaUserModel {
     public boolean isNoneUser()  {
         return authentication == null;
     }
+
+    /**
+     * Creates the JAAS configuration string for SASL SCRAM-SHA-512 authentication.
+     *
+     * @return The JAAS configuration string.
+     */
+    public String getSaslJsonConfig() {
+        return getSaslJsonConfig(getScramUserName(name), scramSha512Password);
+    }
+
 }

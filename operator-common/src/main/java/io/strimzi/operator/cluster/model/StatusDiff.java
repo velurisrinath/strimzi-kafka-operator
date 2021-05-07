@@ -5,9 +5,11 @@
 package io.strimzi.operator.cluster.model;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import io.fabric8.zjsonpatch.JsonDiff;
 import io.strimzi.api.kafka.model.status.Status;
-import io.strimzi.operator.common.operator.resource.AbstractResourceDiff;
+import io.strimzi.operator.common.operator.resource.AbstractJsonDiff;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -15,8 +17,12 @@ import java.util.regex.Pattern;
 
 import static io.fabric8.kubernetes.client.internal.PatchUtils.patchMapper;
 
-public class StatusDiff extends AbstractResourceDiff {
+public class StatusDiff extends AbstractJsonDiff {
+
     private static final Logger log = LogManager.getLogger(StatusDiff.class.getName());
+
+    // use SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS just for better human readability in the logs
+    public static final ObjectMapper PATCH_MAPPER = patchMapper().copy().configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
 
     private static final Pattern IGNORABLE_PATHS = Pattern.compile(
             "^(/conditions/[0-9]+/lastTransitionTime)$");
@@ -24,8 +30,8 @@ public class StatusDiff extends AbstractResourceDiff {
     private final boolean isEmpty;
 
     public StatusDiff(Status current, Status desired) {
-        JsonNode source = patchMapper().valueToTree(current == null ? "{}" : current);
-        JsonNode target = patchMapper().valueToTree(desired == null ? "{}" : desired);
+        JsonNode source = PATCH_MAPPER.valueToTree(current == null ? "{}" : current);
+        JsonNode target = PATCH_MAPPER.valueToTree(desired == null ? "{}" : desired);
         JsonNode diff = JsonDiff.asJson(source, target);
 
         int num = 0;
@@ -53,7 +59,7 @@ public class StatusDiff extends AbstractResourceDiff {
     /**
      * Returns whether the Diff is empty or not
      *
-     * @return true when the storage configurations are the same
+     * @return true when the diffed statuses match
      */
     @Override
     public boolean isEmpty() {

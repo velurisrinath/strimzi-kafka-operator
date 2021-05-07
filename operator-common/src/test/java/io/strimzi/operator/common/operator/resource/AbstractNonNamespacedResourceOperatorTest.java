@@ -4,6 +4,7 @@
  */
 package io.strimzi.operator.common.operator.resource;
 
+import io.fabric8.kubernetes.api.model.DeletionPropagation;
 import io.fabric8.kubernetes.api.model.HasMetadata;
 import io.fabric8.kubernetes.api.model.KubernetesResourceList;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -36,9 +37,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(VertxExtension.class)
-public abstract class AbstractNonNamespacedResourceOperatorTest<C extends KubernetesClient, T extends HasMetadata,
-        L extends KubernetesResourceList, D, R extends Resource<T, D>> {
-
+public abstract class AbstractNonNamespacedResourceOperatorTest<C extends KubernetesClient,
+        T extends HasMetadata,
+        L extends KubernetesResourceList<T>,
+        R extends Resource<T>> {
     public static final String RESOURCE_NAME = "my-resource";
     protected static Vertx vertx;
 
@@ -68,31 +70,32 @@ public abstract class AbstractNonNamespacedResourceOperatorTest<C extends Kubern
     protected abstract T resource();
 
     /**
+     * Get a modified test resource to test how are changes handled
+     */
+    protected abstract T modifiedResource();
+
+    /**
      * Configure the given {@code mockClient} to return the given {@code op}
      * that's appropriate for the kind of resource being tests.
      */
     protected abstract void mocker(C mockClient, MixedOperation op);
 
     /** Create the subclass of ResourceOperation to be tested */
-    protected abstract AbstractNonNamespacedResourceOperator<C, T, L, D, R> createResourceOperations(
+    protected abstract AbstractNonNamespacedResourceOperator<C, T, L, R> createResourceOperations(
             Vertx vertx, C mockClient);
 
     /** Create the subclass of ResourceOperation to be tested with mocked readiness checks*/
-    protected AbstractNonNamespacedResourceOperator<C, T, L, D, R> createResourceOperationsWithMockedReadiness(
+    protected AbstractNonNamespacedResourceOperator<C, T, L, R> createResourceOperationsWithMockedReadiness(
             Vertx vertx, C mockClient)    {
         return createResourceOperations(vertx, mockClient);
     }
 
     @Test
-    public void testCreateWhenExistsIsAPatch(VertxTestContext context) {
-        createWhenExistsIsAPatch(context, true);
-    }
-
-    public void createWhenExistsIsAPatch(VertxTestContext context, boolean cascade) {
+    public void testCreateWhenExistsWithChangeIsAPatch(VertxTestContext context) {
         T resource = resource();
         Resource mockResource = mock(resourceType());
         when(mockResource.get()).thenReturn(resource);
-        when(mockResource.cascading(cascade)).thenReturn(mockResource);
+        when(mockResource.withPropagationPolicy(true ? DeletionPropagation.FOREGROUND : DeletionPropagation.ORPHAN)).thenReturn(mockResource);
         when(mockResource.patch(any())).thenReturn(resource);
 
         NonNamespaceOperation mockNameable = mock(NonNamespaceOperation.class);
@@ -104,19 +107,51 @@ public abstract class AbstractNonNamespacedResourceOperatorTest<C extends Kubern
         C mockClient = mock(clientType());
         mocker(mockClient, mockCms);
 
-        AbstractNonNamespacedResourceOperator<C, T, L, D, R> op = createResourceOperations(vertx, mockClient);
+        AbstractNonNamespacedResourceOperator<C, T, L, R> op = createResourceOperations(vertx, mockClient);
+
+        Checkpoint async = context.checkpoint();
+        op.createOrUpdate(modifiedResource())
+                .onComplete(context.succeeding(ar -> {
+                    verify(mockResource).get();
+                    verify(mockResource).patch(any());
+                    verify(mockResource, never()).create(any());
+                    verify(mockResource, never()).create();
+                    verify(mockResource, never()).createOrReplace(any());
+                    verify(mockCms, never()).createOrReplace(any());
+                    async.flag();
+                }));
+    }
+
+    @Test
+    public void testCreateWhenExistsWithoutChangeIsNotAPatch(VertxTestContext context) {
+        T resource = resource();
+        Resource mockResource = mock(resourceType());
+        when(mockResource.get()).thenReturn(resource);
+        when(mockResource.withPropagationPolicy(true ? DeletionPropagation.FOREGROUND : DeletionPropagation.ORPHAN)).thenReturn(mockResource);
+        when(mockResource.patch(any())).thenReturn(resource);
+
+        NonNamespaceOperation mockNameable = mock(NonNamespaceOperation.class);
+        when(mockNameable.withName(matches(resource.getMetadata().getName()))).thenReturn(mockResource);
+
+        MixedOperation mockCms = mock(MixedOperation.class);
+        when(mockCms.withName(matches(RESOURCE_NAME))).thenReturn(mockResource);
+
+        C mockClient = mock(clientType());
+        mocker(mockClient, mockCms);
+
+        AbstractNonNamespacedResourceOperator<C, T, L, R> op = createResourceOperations(vertx, mockClient);
 
         Checkpoint async = context.checkpoint();
         op.createOrUpdate(resource())
-            .setHandler(context.succeeding(ar -> {
-                verify(mockResource).get();
-                verify(mockResource).patch(any());
-                verify(mockResource, never()).create(any());
-                verify(mockResource, never()).createNew();
-                verify(mockResource, never()).createOrReplace(any());
-                verify(mockCms, never()).createOrReplace(any());
-                async.flag();
-            }));
+                .onComplete(context.succeeding(ar -> {
+                    verify(mockResource).get();
+                    verify(mockResource, never()).patch(any());
+                    verify(mockResource, never()).create(any());
+                    verify(mockResource, never()).create();
+                    verify(mockResource, never()).createOrReplace(any());
+                    verify(mockCms, never()).createOrReplace(any());
+                    async.flag();
+                }));
     }
 
     @Test
@@ -136,10 +171,10 @@ public abstract class AbstractNonNamespacedResourceOperatorTest<C extends Kubern
         C mockClient = mock(clientType());
         mocker(mockClient, mockCms);
 
-        AbstractNonNamespacedResourceOperator<C, T, L, D, R> op = createResourceOperations(vertx, mockClient);
+        AbstractNonNamespacedResourceOperator<C, T, L, R> op = createResourceOperations(vertx, mockClient);
 
         Checkpoint async = context.checkpoint();
-        op.createOrUpdate(resource).setHandler(context.failing(e -> {
+        op.createOrUpdate(resource).onComplete(context.failing(e -> {
             context.verify(() -> assertThat(e, is(ex)));
             async.flag();
         }));
@@ -150,7 +185,7 @@ public abstract class AbstractNonNamespacedResourceOperatorTest<C extends Kubern
         T resource = resource();
         Resource mockResource = mock(resourceType());
         when(mockResource.get()).thenReturn(null);
-        when(mockResource.create(any())).thenReturn(resource);
+        when(mockResource.create((T) any())).thenReturn(resource);
 
         NonNamespaceOperation mockNameable = mock(NonNamespaceOperation.class);
         when(mockNameable.withName(matches(resource.getMetadata().getName()))).thenReturn(mockResource);
@@ -161,11 +196,11 @@ public abstract class AbstractNonNamespacedResourceOperatorTest<C extends Kubern
         C mockClient = mock(clientType());
         mocker(mockClient, mockCms);
 
-        AbstractNonNamespacedResourceOperator<C, T, L, D, R> op = createResourceOperationsWithMockedReadiness(
+        AbstractNonNamespacedResourceOperator<C, T, L, R> op = createResourceOperationsWithMockedReadiness(
                 vertx, mockClient);
 
         Checkpoint async = context.checkpoint();
-        op.createOrUpdate(resource).setHandler(context.succeeding(rr -> {
+        op.createOrUpdate(resource).onComplete(context.succeeding(rr -> {
             verify(mockResource).get();
             verify(mockResource).create(eq(resource));
             async.flag();
@@ -185,15 +220,15 @@ public abstract class AbstractNonNamespacedResourceOperatorTest<C extends Kubern
 
         MixedOperation mockCms = mock(MixedOperation.class);
         when(mockCms.withName(matches(RESOURCE_NAME))).thenReturn(mockResource);
-        when(mockResource.create(any())).thenThrow(ex);
+        when(mockResource.create((T) any())).thenThrow(ex);
 
         C mockClient = mock(clientType());
         mocker(mockClient, mockCms);
 
-        AbstractNonNamespacedResourceOperator<C, T, L, D, R> op = createResourceOperations(vertx, mockClient);
+        AbstractNonNamespacedResourceOperator<C, T, L, R> op = createResourceOperations(vertx, mockClient);
 
         Checkpoint async = context.checkpoint();
-        op.createOrUpdate(resource).setHandler(context.failing(e -> {
+        op.createOrUpdate(resource).onComplete(context.failing(e -> {
             context.verify(() -> assertThat(e, is(ex)));
             async.flag();
         }));
@@ -213,10 +248,10 @@ public abstract class AbstractNonNamespacedResourceOperatorTest<C extends Kubern
         C mockClient = mock(clientType());
         mocker(mockClient, mockCms);
 
-        AbstractNonNamespacedResourceOperator<C, T, L, D, R> op = createResourceOperations(vertx, mockClient);
+        AbstractNonNamespacedResourceOperator<C, T, L, R> op = createResourceOperations(vertx, mockClient);
 
         Checkpoint async = context.checkpoint();
-        op.reconcile(resource.getMetadata().getName(), null).setHandler(context.succeeding(rrDeleted -> {
+        op.reconcile(resource.getMetadata().getName(), null).onComplete(context.succeeding(rrDeleted -> {
             verify(mockResource).get();
             verify(mockResource, never()).delete();
             async.flag();
@@ -249,10 +284,10 @@ public abstract class AbstractNonNamespacedResourceOperatorTest<C extends Kubern
         C mockClient = mock(clientType());
         mocker(mockClient, mockCms);
 
-        AbstractNonNamespacedResourceOperator<C, T, L, D, R> op = createResourceOperations(vertx, mockClient);
+        AbstractNonNamespacedResourceOperator<C, T, L, R> op = createResourceOperations(vertx, mockClient);
 
         Checkpoint async = context.checkpoint();
-        op.reconcile(resource.getMetadata().getName(), null).setHandler(context.succeeding(rrDeleted -> {
+        op.reconcile(resource.getMetadata().getName(), null).onComplete(context.succeeding(rrDeleted -> {
             verify(mockResource).delete();
             context.verify(() -> assertThat("Watch was not closed", watchWasClosed.get(), is(true)));
             async.flag();
@@ -283,10 +318,10 @@ public abstract class AbstractNonNamespacedResourceOperatorTest<C extends Kubern
         C mockClient = mock(clientType());
         mocker(mockClient, mockCms);
 
-        AbstractNonNamespacedResourceOperator<C, T, L, D, R> op = createResourceOperations(vertx, mockClient);
+        AbstractNonNamespacedResourceOperator<C, T, L, R> op = createResourceOperations(vertx, mockClient);
 
         Checkpoint async = context.checkpoint();
-        op.reconcile(resource.getMetadata().getName(), null).setHandler(context.failing(e -> context.verify(() -> {
+        op.reconcile(resource.getMetadata().getName(), null).onComplete(context.failing(e -> context.verify(() -> {
             assertThat(e, instanceOf(TimeoutException.class));
             verify(mockResource).delete();
             assertThat("Watch was not closed", watchWasClosed.get(), is(true));
@@ -320,10 +355,10 @@ public abstract class AbstractNonNamespacedResourceOperatorTest<C extends Kubern
         C mockClient = mock(clientType());
         mocker(mockClient, mockCms);
 
-        AbstractNonNamespacedResourceOperator<C, T, L, D, R> op = createResourceOperations(vertx, mockClient);
+        AbstractNonNamespacedResourceOperator<C, T, L, R> op = createResourceOperations(vertx, mockClient);
 
         Checkpoint async = context.checkpoint();
-        op.reconcile(resource.getMetadata().getName(), null).setHandler(context.succeeding(rrDeleted -> {
+        op.reconcile(resource.getMetadata().getName(), null).onComplete(context.succeeding(rrDeleted -> {
             verify(mockResource).delete();
             context.verify(() -> assertThat("Watch was not closed", watchWasClosed.get(), is(true)));
             async.flag();
@@ -357,10 +392,10 @@ public abstract class AbstractNonNamespacedResourceOperatorTest<C extends Kubern
         C mockClient = mock(clientType());
         mocker(mockClient, mockCms);
 
-        AbstractNonNamespacedResourceOperator<C, T, L, D, R> op = createResourceOperations(vertx, mockClient);
+        AbstractNonNamespacedResourceOperator<C, T, L, R> op = createResourceOperations(vertx, mockClient);
 
         Checkpoint async = context.checkpoint();
-        op.reconcile(resource.getMetadata().getName(), null).setHandler(context.failing(e -> context.verify(() -> {
+        op.reconcile(resource.getMetadata().getName(), null).onComplete(context.failing(e -> context.verify(() -> {
             assertThat(e, is(ex));
             assertThat("Watch was not closed", watchWasClosed.get(), is(true));
             async.flag();
@@ -386,10 +421,10 @@ public abstract class AbstractNonNamespacedResourceOperatorTest<C extends Kubern
         C mockClient = mock(clientType());
         mocker(mockClient, mockCms);
 
-        AbstractNonNamespacedResourceOperator<C, T, L, D, R> op = createResourceOperations(vertx, mockClient);
+        AbstractNonNamespacedResourceOperator<C, T, L, R> op = createResourceOperations(vertx, mockClient);
 
         Checkpoint async = context.checkpoint();
-        op.reconcile(resource.getMetadata().getName(), null).setHandler(context.failing(e -> {
+        op.reconcile(resource.getMetadata().getName(), null).onComplete(context.failing(e -> {
             context.verify(() -> assertThat(e, is(ex)));
             async.flag();
         }));
@@ -422,10 +457,10 @@ public abstract class AbstractNonNamespacedResourceOperatorTest<C extends Kubern
         C mockClient = mock(clientType());
         mocker(mockClient, mockCms);
 
-        AbstractNonNamespacedResourceOperator<C, T, L, D, R> op = createResourceOperations(vertx, mockClient);
+        AbstractNonNamespacedResourceOperator<C, T, L, R> op = createResourceOperations(vertx, mockClient);
 
         Checkpoint async = context.checkpoint();
-        op.reconcile(resource.getMetadata().getName(), null).setHandler(context.failing(e -> {
+        op.reconcile(resource.getMetadata().getName(), null).onComplete(context.failing(e -> {
             verify(mockResource).delete();
             context.verify(() -> assertThat("Watch was not closed", watchWasClosed.get(), is(true)));
             async.flag();

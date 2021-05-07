@@ -7,7 +7,6 @@ package io.strimzi.operator.common.operator.resource;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRole;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBuilder;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleList;
-import io.fabric8.kubernetes.api.model.rbac.DoneableClusterRole;
 import io.fabric8.kubernetes.api.model.rbac.PolicyRule;
 import io.fabric8.kubernetes.api.model.rbac.PolicyRuleBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -23,14 +22,12 @@ import static org.hamcrest.Matchers.hasSize;
 
 @ExtendWith(VertxExtension.class)
 public class ClusterRoleOperatorIT extends AbstractNonNamespacedResourceOperatorIT<KubernetesClient,
-        ClusterRole, ClusterRoleList, DoneableClusterRole,
-        Resource<ClusterRole, DoneableClusterRole>> {
+        ClusterRole, ClusterRoleList, Resource<ClusterRole>> {
 
     @Override
     protected AbstractNonNamespacedResourceOperator<KubernetesClient,
-            ClusterRole, ClusterRoleList, DoneableClusterRole,
-            Resource<ClusterRole, DoneableClusterRole>> operator() {
-        return new ClusterRoleOperator(vertx, client, 10_000);
+            ClusterRole, ClusterRoleList, Resource<ClusterRole>> operator() {
+        return new ClusterRoleOperator(vertx, client);
     }
 
     @Override
@@ -43,7 +40,7 @@ public class ClusterRoleOperatorIT extends AbstractNonNamespacedResourceOperator
 
         return new ClusterRoleBuilder()
                 .withNewMetadata()
-                    .withName(RESOURCE_NAME)
+                    .withName(resourceName)
                     .withLabels(singletonMap("state", "new"))
                 .endMetadata()
                 .withRules(rule)
@@ -60,7 +57,7 @@ public class ClusterRoleOperatorIT extends AbstractNonNamespacedResourceOperator
 
         return new ClusterRoleBuilder()
                 .withNewMetadata()
-                .withName(RESOURCE_NAME)
+                .withName(resourceName)
                 .withLabels(singletonMap("state", "modified"))
                 .endMetadata()
                 .withRules(rule)

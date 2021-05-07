@@ -19,9 +19,9 @@ import lombok.EqualsAndHashCode;
         builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
-@JsonPropertyOrder({"replicas", "version", "image", "connectCluster", 
+@JsonPropertyOrder({"version", "replicas", "image", "connectCluster",
         "clusters", "mirrors", "resources", 
-        "livenessProbe", "readinessProbe", "jvmOptions",
+        "livenessProbe", "readinessProbe", "jvmOptions", "jmxOptions",
         "affinity", "tolerations", "logging", "metrics", "tracing", 
         "template", "externalConfiguration"})
 @EqualsAndHashCode(callSuper = true, doNotUseGetters = true)

@@ -5,11 +5,14 @@
 package io.strimzi.systemtest.logs;
 
 import io.strimzi.systemtest.Environment;
+import io.strimzi.test.timemeasuring.Operation;
+import io.strimzi.test.timemeasuring.TimeMeasuringSystem;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.LifecycleMethodExecutionExceptionHandler;
 import org.junit.jupiter.api.extension.TestExecutionExceptionHandler;
+import org.opentest4j.TestAbortedException;
 
 import java.io.File;
 import java.text.SimpleDateFormat;
@@ -23,21 +26,35 @@ public class TestExecutionWatcher implements TestExecutionExceptionHandler, Life
 
     @Override
     public void handleTestExecutionException(ExtensionContext extensionContext, Throwable throwable) throws Throwable {
-        String testClass = extensionContext.getRequiredTestClass().getName();
-        String testMethod = extensionContext.getRequiredTestMethod().getName();
-        collectLogs(testClass, testMethod);
+        if (!(throwable instanceof TestAbortedException)) {
+            String testClass = extensionContext.getRequiredTestClass().getName();
+            String testMethod = extensionContext.getRequiredTestMethod().getName();
+            collectLogs(testClass, testMethod);
+        }
         throw throwable;
     }
 
     @Override
     public void handleBeforeAllMethodExecutionException(ExtensionContext extensionContext, Throwable throwable) throws Throwable {
-        String testClass = extensionContext.getRequiredTestClass().getName();
-        collectLogs(testClass, testClass);
+        if (!(throwable instanceof TestAbortedException)) {
+            String testClass = extensionContext.getRequiredTestClass().getName();
+            collectLogs(testClass, testClass);
+        }
         throw throwable;
     }
 
     @Override
     public void handleBeforeEachMethodExecutionException(ExtensionContext extensionContext, Throwable throwable) throws Throwable {
+        if (!(throwable instanceof TestAbortedException)) {
+            String testClass = extensionContext.getRequiredTestClass().getName();
+            String testMethod = extensionContext.getRequiredTestMethod().getName();
+            collectLogs(testClass, testMethod);
+        }
+        throw throwable;
+    }
+
+    @Override
+    public void handleAfterEachMethodExecutionException(ExtensionContext extensionContext, Throwable throwable) throws Throwable {
         String testClass = extensionContext.getRequiredTestClass().getName();
         String testMethod = extensionContext.getRequiredTestMethod().getName();
         collectLogs(testClass, testMethod);
@@ -51,7 +68,9 @@ public class TestExecutionWatcher implements TestExecutionExceptionHandler, Life
         throw throwable;
     }
 
-    void collectLogs(String testClass, String testMethod) {
+    public static void collectLogs(String testClass, String testMethod) {
+        // Stop test execution time counter in case of failures
+        TimeMeasuringSystem.getInstance().stopOperation(Operation.TEST_EXECUTION, testClass, testMethod);
         // Get current date to create a unique folder
         final SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyyMMdd_HHmmss");
         simpleDateFormat.setTimeZone(TimeZone.getTimeZone("GMT"));
@@ -68,5 +87,6 @@ public class TestExecutionWatcher implements TestExecutionExceptionHandler, Life
         logCollector.collectStatefulSets();
         logCollector.collectReplicaSets();
         logCollector.collectStrimzi();
+        logCollector.collectClusterInfo();
     }
 }

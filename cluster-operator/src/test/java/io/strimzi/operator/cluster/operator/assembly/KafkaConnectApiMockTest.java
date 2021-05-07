@@ -5,6 +5,7 @@
 package io.strimzi.operator.cluster.operator.assembly;
 
 import io.strimzi.operator.common.BackOff;
+import io.strimzi.test.annotations.ParallelTest;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.Checkpoint;
@@ -12,7 +13,6 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.Collections;
@@ -35,25 +35,20 @@ public class KafkaConnectApiMockTest {
         vertx.close();
     }
 
-    @Test
-    public void testStatusWithBackOffSuccedingImmediatelly(VertxTestContext context) {
+    @ParallelTest
+    public void testStatusWithBackOffSucceedingImmediately(VertxTestContext context) {
         Queue<Future<Map<String, Object>>> statusResults = new ArrayBlockingQueue<>(1);
         statusResults.add(Future.succeededFuture(Collections.emptyMap()));
 
         KafkaConnectApi api = new MockKafkaConnectApi(vertx, statusResults);
         Checkpoint async = context.checkpoint();
 
-        api.statusWithBackOff(backOff, "some-host", 8083, "some-connector").setHandler(res -> {
-            if (res.succeeded()) {
-                async.flag();
-            } else {
-                context.failNow(res.cause());
-            }
-        });
+        api.statusWithBackOff(backOff, "some-host", 8083, "some-connector")
+            .onComplete(context.succeeding(res -> async.flag()));
     }
 
-    @Test
-    public void testStatusWithBackOffSuccedingLater(VertxTestContext context) {
+    @ParallelTest
+    public void testStatusWithBackOffSuccedingEventually(VertxTestContext context) {
         Queue<Future<Map<String, Object>>> statusResults = new ArrayBlockingQueue<>(3);
         statusResults.add(Future.failedFuture(new ConnectRestException(null, null, 404, null, null)));
         statusResults.add(Future.failedFuture(new ConnectRestException(null, null, 404, null, null)));
@@ -62,17 +57,12 @@ public class KafkaConnectApiMockTest {
         KafkaConnectApi api = new MockKafkaConnectApi(vertx, statusResults);
         Checkpoint async = context.checkpoint();
 
-        api.statusWithBackOff(backOff, "some-host", 8083, "some-connector").setHandler(res -> {
-            if (res.succeeded()) {
-                async.flag();
-            } else {
-                context.failNow(res.cause());
-            }
-        });
+        api.statusWithBackOff(backOff, "some-host", 8083, "some-connector")
+            .onComplete(context.succeeding(res -> async.flag()));
     }
 
-    @Test
-    public void testStatusWithBackOffFailingAfterBackOff(VertxTestContext context) {
+    @ParallelTest
+    public void testStatusWithBackOffFailingRepeatedly(VertxTestContext context) {
         Queue<Future<Map<String, Object>>> statusResults = new ArrayBlockingQueue<>(4);
         statusResults.add(Future.failedFuture(new ConnectRestException(null, null, 404, null, null)));
         statusResults.add(Future.failedFuture(new ConnectRestException(null, null, 404, null, null)));
@@ -82,30 +72,20 @@ public class KafkaConnectApiMockTest {
         KafkaConnectApi api = new MockKafkaConnectApi(vertx, statusResults);
         Checkpoint async = context.checkpoint();
 
-        api.statusWithBackOff(backOff, "some-host", 8083, "some-connector").setHandler(res -> {
-            if (res.succeeded()) {
-                context.failNow(new Throwable("Was expected to fail"));
-            } else {
-                async.flag();
-            }
-        });
+        api.statusWithBackOff(backOff, "some-host", 8083, "some-connector")
+            .onComplete(context.failing(res -> async.flag()));
     }
 
-    @Test
-    public void testStatusWithBackOffAnotherError(VertxTestContext context) {
+    @ParallelTest
+    public void testStatusWithBackOffOtherExceptionStillFails(VertxTestContext context) {
         Queue<Future<Map<String, Object>>> statusResults = new ArrayBlockingQueue<>(1);
         statusResults.add(Future.failedFuture(new ConnectRestException(null, null, 500, null, null)));
 
         KafkaConnectApi api = new MockKafkaConnectApi(vertx, statusResults);
         Checkpoint async = context.checkpoint();
 
-        api.statusWithBackOff(backOff, "some-host", 8083, "some-connector").setHandler(res -> {
-            if (res.succeeded()) {
-                context.failNow(new Throwable("Was expected to fail"));
-            } else {
-                async.flag();
-            }
-        });
+        api.statusWithBackOff(backOff, "some-host", 8083, "some-connector")
+            .onComplete(context.failing(res -> async.flag()));
     }
 
     class MockKafkaConnectApi extends KafkaConnectApiImpl   {

@@ -4,30 +4,37 @@
  */
 package io.strimzi.systemtest.kafkaclients.internalClients;
 
-import io.strimzi.api.kafka.model.KafkaResources;
-import io.strimzi.systemtest.Constants;
-import io.strimzi.systemtest.kafkaclients.AbstractKafkaClient;
-import io.strimzi.systemtest.kafkaclients.KafkaClientOperations;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import static io.strimzi.systemtest.kafkaclients.internalClients.ClientType.CLI_KAFKA_VERIFIABLE_CONSUMER;
+import static io.strimzi.systemtest.kafkaclients.internalClients.ClientType.CLI_KAFKA_VERIFIABLE_PRODUCER;
+import static org.hamcrest.MatcherAssert.assertThat;
 
+import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Random;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static io.strimzi.systemtest.kafkaclients.internalClients.ClientType.CLI_KAFKA_VERIFIABLE_CONSUMER;
-import static io.strimzi.systemtest.kafkaclients.internalClients.ClientType.CLI_KAFKA_VERIFIABLE_PRODUCER;
-import static org.hamcrest.MatcherAssert.assertThat;
+import io.strimzi.systemtest.utils.ClientUtils;
+import io.strimzi.test.TestUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import io.strimzi.systemtest.Constants;
+import io.strimzi.systemtest.kafkaclients.AbstractKafkaClient;
+import io.strimzi.systemtest.kafkaclients.KafkaClientOperations;
 
 /**
  * The InternalKafkaClient for sending and receiving messages using basic properties.
  * The client is using an internal listeners and communicate from the pod.
  */
-public class InternalKafkaClient extends AbstractKafkaClient implements KafkaClientOperations {
+public class InternalKafkaClient extends AbstractKafkaClient<InternalKafkaClient.Builder> implements KafkaClientOperations {
 
     private static final Logger LOGGER = LogManager.getLogger(InternalKafkaClient.class);
 
     private String podName;
+    // name of KafkaUser with/without prefix for secret
+    private String completeKafkaUsername = secretPrefix == null ? kafkaUsername : secretPrefix + kafkaUsername;
 
     public static class Builder extends AbstractKafkaClient.Builder<Builder> {
 
@@ -35,23 +42,29 @@ public class InternalKafkaClient extends AbstractKafkaClient implements KafkaCli
 
         public Builder withUsingPodName(String podName) {
             this.podName = podName;
-            return self();
+            return this;
         }
 
         @Override
         public InternalKafkaClient build() {
             return new InternalKafkaClient(this);
         }
-
-        @Override
-        protected Builder self() {
-            return this;
-        }
     }
 
     private InternalKafkaClient(Builder builder) {
         super(builder);
         podName = builder.podName;
+    }
+
+    @Override
+    protected Builder newBuilder() {
+        return new Builder();
+    }
+
+    @Override
+    public Builder toBuilder() {
+        return ((Builder) super.toBuilder())
+            .withUsingPodName(podName);
     }
 
     public int sendMessagesPlain() {
@@ -70,8 +83,8 @@ public class InternalKafkaClient extends AbstractKafkaClient implements KafkaCli
             .withUsingPodName(podName)
             .withPodNamespace(namespaceName)
             .withMaxMessages(messageCount)
-            .withKafkaUsername(kafkaUsername)
-            .withBootstrapServer(KafkaResources.plainBootstrapAddress(clusterName))
+            .withKafkaUsername(completeKafkaUsername)
+            .withBootstrapServer(getBootstrapServerFromStatus())
             .withTopicName(topicName)
             .build();
 
@@ -100,8 +113,8 @@ public class InternalKafkaClient extends AbstractKafkaClient implements KafkaCli
             .withUsingPodName(podName)
             .withPodNamespace(namespaceName)
             .withMaxMessages(messageCount)
-            .withKafkaUsername(kafkaUsername)
-            .withBootstrapServer(KafkaResources.tlsBootstrapAddress(clusterName))
+            .withKafkaUsername(completeKafkaUsername)
+            .withBootstrapServer(getBootstrapServerFromStatus())
             .withTopicName(topicName)
             .build();
 
@@ -130,8 +143,8 @@ public class InternalKafkaClient extends AbstractKafkaClient implements KafkaCli
             .withUsingPodName(podName)
             .withPodNamespace(namespaceName)
             .withMaxMessages(messageCount)
-            .withKafkaUsername(kafkaUsername)
-            .withBootstrapServer(KafkaResources.plainBootstrapAddress(clusterName))
+            .withKafkaUsername(completeKafkaUsername)
+            .withBootstrapServer(getBootstrapServerFromStatus())
             .withTopicName(topicName)
             .withConsumerGroupName(consumerGroup)
             .withConsumerInstanceId("instance" + new Random().nextInt(Integer.MAX_VALUE))
@@ -166,8 +179,8 @@ public class InternalKafkaClient extends AbstractKafkaClient implements KafkaCli
             .withUsingPodName(podName)
             .withPodNamespace(namespaceName)
             .withMaxMessages(messageCount)
-            .withKafkaUsername(kafkaUsername)
-            .withBootstrapServer(KafkaResources.tlsBootstrapAddress(clusterName))
+            .withKafkaUsername(completeKafkaUsername)
+            .withBootstrapServer(getBootstrapServerFromStatus())
             .withTopicName(topicName)
             .withConsumerGroupName(consumerGroup)
             .withConsumerInstanceId("instance" + new Random().nextInt(Integer.MAX_VALUE))
@@ -183,6 +196,47 @@ public class InternalKafkaClient extends AbstractKafkaClient implements KafkaCli
         LOGGER.info("Consumer consumed {} messages", received);
 
         return received;
+    }
+
+    public void produceAndConsumesPlainMessagesUntilBothOperationsAreSuccessful() {
+        TestUtils.waitFor("Producer and consumer will successfully send and receive messages.", Duration.ofMinutes(1).toMillis(),
+            Constants.GLOBAL_TIMEOUT, () -> {
+                // generate new consumer group...
+                this.consumerGroup = ClientUtils.generateRandomConsumerGroup();
+                return this.sendMessagesPlain() == this.receiveMessagesPlain();
+            });
+    }
+
+    public void consumesPlainMessagesUntilOperationIsSuccessful(int sentMessages) {
+        TestUtils.waitFor("Consumer will successfully receive messages.", Duration.ofMinutes(1).toMillis(),
+            Constants.GLOBAL_TIMEOUT, () -> {
+                // generate new consumer group...
+                this.consumerGroup = ClientUtils.generateRandomConsumerGroup();
+                return sentMessages == this.receiveMessagesPlain();
+            });
+    }
+
+    public void produceAndConsumesTlsMessagesUntilBothOperationsAreSuccessful() {
+        TestUtils.waitFor("Producer and consumer will successfully send and receive messages.", Duration.ofMinutes(1).toMillis(),
+            Constants.GLOBAL_TIMEOUT, () -> {
+                // generate new consumer group...
+                this.consumerGroup = ClientUtils.generateRandomConsumerGroup();
+                return this.sendMessagesTls() == this.receiveMessagesTls();
+            });
+    }
+
+    public void produceTlsMessagesUntilOperationIsSuccessful(int receivedMessages) {
+        TestUtils.waitFor("Producer and consumer will successfully send and receive messages.", Constants.GLOBAL_CLIENTS_POLL,
+            Constants.GLOBAL_TIMEOUT, () -> this.sendMessagesTls() == receivedMessages);
+    }
+
+    public void consumesTlsMessagesUntilOperationIsSuccessful(int sentMessages) {
+        TestUtils.waitFor("Consumer will successfully receive messages.", Duration.ofMinutes(1).toMillis(),
+            Constants.GLOBAL_TIMEOUT, () -> {
+                // generate new consumer group...
+                this.consumerGroup = ClientUtils.generateRandomConsumerGroup();
+                return sentMessages == this.receiveMessagesTls();
+            });
     }
 
     public void checkProducedAndConsumedMessages(int producedMessages, int consumedMessages) {
@@ -238,11 +292,35 @@ public class InternalKafkaClient extends AbstractKafkaClient implements KafkaCli
         return receivedMessages;
     }
 
-    public void setPodName(String podName) {
-        this.podName = podName;
-    }
-
     public String getPodName() {
         return podName;
+    }
+
+    public Map<String, String> getCurrentOffsets() {
+        return getCurrentOffsets(Constants.GLOBAL_CLIENTS_TIMEOUT);
+    }
+
+    public Map<String, String> getCurrentOffsets(long timeoutMs) {
+        VerifiableClient consumerGroups = new VerifiableClient.VerifiableClientBuilder()
+            .withClientType(ClientType.CLI_KAFKA_CONSUMER_GROUPS)
+            .withUsingPodName(podName)
+            .withPodNamespace(namespaceName)
+            .withBootstrapServer(getBootstrapServerFromStatus())
+            .withConsumerGroupName(consumerGroup)
+            .build();
+        LOGGER.info("Starting consumerGroups configuration: {}", consumerGroups.toString());
+
+        boolean hasPassed = consumerGroups.run(timeoutMs);
+        LOGGER.info("ConsumerGroups finished correctly: {}", hasPassed);
+
+        // output parsing
+        Map<String, String> currentOffsets = new HashMap<>();
+        for (String row : consumerGroups.getMessages()) {
+            if (row.startsWith(consumerGroup)) {
+                String[] values = row.replaceAll(" +", " ").split(" ");
+                currentOffsets.put(values[0] + "-" + values[1] + "-" + values[2], values[3]);
+            }
+        }
+        return currentOffsets;
     }
 }

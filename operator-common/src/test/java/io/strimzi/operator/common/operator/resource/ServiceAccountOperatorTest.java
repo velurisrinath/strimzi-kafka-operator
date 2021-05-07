@@ -4,7 +4,7 @@
  */
 package io.strimzi.operator.common.operator.resource;
 
-import io.fabric8.kubernetes.api.model.DoneableServiceAccount;
+import io.fabric8.kubernetes.api.model.DeletionPropagation;
 import io.fabric8.kubernetes.api.model.ServiceAccount;
 import io.fabric8.kubernetes.api.model.ServiceAccountBuilder;
 import io.fabric8.kubernetes.api.model.ServiceAccountList;
@@ -27,7 +27,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-public class ServiceAccountOperatorTest extends AbstractResourceOperatorTest<KubernetesClient, ServiceAccount, ServiceAccountList, DoneableServiceAccount, Resource<ServiceAccount, DoneableServiceAccount>> {
+public class ServiceAccountOperatorTest extends AbstractResourceOperatorTest<KubernetesClient, ServiceAccount, ServiceAccountList, Resource<ServiceAccount>> {
 
 
     @Override
@@ -52,27 +52,39 @@ public class ServiceAccountOperatorTest extends AbstractResourceOperatorTest<Kub
     }
 
     @Override
+    protected ServiceAccount modifiedResource() {
+        return new ServiceAccountBuilder()
+                .withNewMetadata()
+                    .withName(RESOURCE_NAME)
+                    .withNamespace(NAMESPACE)
+                    .withLabels(singletonMap("foo2", "bar2"))
+                .endMetadata()
+                .build();
+    }
+
+    @Override
     protected void mocker(KubernetesClient mockClient, MixedOperation op) {
         when(mockClient.serviceAccounts()).thenReturn(op);
     }
 
     @Override
-    protected AbstractResourceOperator<KubernetesClient, ServiceAccount, ServiceAccountList, DoneableServiceAccount, Resource<ServiceAccount, DoneableServiceAccount>> createResourceOperations(Vertx vertx, KubernetesClient mockClient) {
+    protected AbstractResourceOperator<KubernetesClient, ServiceAccount, ServiceAccountList, Resource<ServiceAccount>> createResourceOperations(Vertx vertx, KubernetesClient mockClient) {
         return new ServiceAccountOperator(vertx, mockClient);
     }
 
     @Override
     @Test
-    public void testCreateWhenExistsIsAPatch(VertxTestContext context) {
-        createWhenExistsIsAPatch(context, true);
+    public void testCreateWhenExistsWithChangeIsAPatch(VertxTestContext context) {
+        testCreateWhenExistsWithChangeIsAPatch(context, true);
     }
+
     @Override
-    public void createWhenExistsIsAPatch(VertxTestContext context, boolean cascade) {
+    public void testCreateWhenExistsWithChangeIsAPatch(VertxTestContext context, boolean cascade) {
         // This is overridden because SA patch is coded as a no op to avoid needless token creation.
         ServiceAccount resource = resource();
         Resource mockResource = mock(resourceType());
         when(mockResource.get()).thenReturn(resource);
-        when(mockResource.cascading(cascade)).thenReturn(mockResource);
+        when(mockResource.withPropagationPolicy(cascade ? DeletionPropagation.FOREGROUND : DeletionPropagation.ORPHAN)).thenReturn(mockResource);
 
         NonNamespaceOperation mockNameable = mock(NonNamespaceOperation.class);
         when(mockNameable.withName(matches(resource.getMetadata().getName()))).thenReturn(mockResource);
@@ -83,16 +95,16 @@ public class ServiceAccountOperatorTest extends AbstractResourceOperatorTest<Kub
         KubernetesClient mockClient = mock(clientType());
         mocker(mockClient, mockCms);
 
-        AbstractResourceOperator<KubernetesClient, ServiceAccount, ServiceAccountList, DoneableServiceAccount, Resource<ServiceAccount, DoneableServiceAccount>> op = createResourceOperations(vertx, mockClient);
+        AbstractResourceOperator<KubernetesClient, ServiceAccount, ServiceAccountList, Resource<ServiceAccount>> op = createResourceOperations(vertx, mockClient);
 
         Checkpoint async = context.checkpoint();
         op.createOrUpdate(resource)
-            .setHandler(context.succeeding(rr -> {
+            .onComplete(context.succeeding(rr -> {
                 context.verify(() -> assertThat(rr, instanceOf(ReconcileResult.Noop.class)));
                 verify(mockResource).get();
                 //verify(mockResource).patch(any());
                 verify(mockResource, never()).create(any());
-                verify(mockResource, never()).createNew();
+                verify(mockResource, never()).create();
                 verify(mockResource, never()).createOrReplace(any());
                 verify(mockCms, never()).createOrReplace(any());
                 async.flag();

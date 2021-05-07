@@ -7,9 +7,13 @@ package io.strimzi.operator.common;
 import io.fabric8.kubernetes.api.model.HasMetadata;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.PodTemplateSpec;
+import io.fabric8.kubernetes.client.CustomResource;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
+import java.util.regex.Pattern;
 
 import static java.lang.Boolean.parseBoolean;
 import static java.lang.Integer.parseInt;
@@ -18,12 +22,50 @@ public class Annotations {
 
     public static final String STRIMZI_DOMAIN = "strimzi.io/";
     public static final String STRIMZI_LOGGING_ANNOTATION = STRIMZI_DOMAIN + "logging";
+    /**
+     * Annotations for rolling a cluster whenever the logging (or it's part) has changed.
+     * By changing the annotation we force a restart since the pod will be out of date compared to the statefulset.
+     */
+    public static final String ANNO_STRIMZI_LOGGING_HASH = STRIMZI_DOMAIN + "logging-hash";
+    public static final String ANNO_STRIMZI_LOGGING_APPENDERS_HASH = STRIMZI_DOMAIN + "logging-appenders-hash";
+    public static final String ANNO_STRIMZI_LOGGING_DYNAMICALLY_UNCHANGEABLE_HASH = STRIMZI_DOMAIN + "logging-appenders-hash";
+
     public static final String STRIMZI_IO_USE_CONNECTOR_RESOURCES = STRIMZI_DOMAIN + "use-connector-resources";
+    // Used to store the revision of the Kafka Connect build (hash of the Dockerfile)
+    public static final String STRIMZI_IO_CONNECT_BUILD_REVISION = STRIMZI_DOMAIN + "connect-build-revision";
+    // Use to force rebuild of the container image even if the dockerfile did not changed
+    public static final String STRIMZI_IO_CONNECT_FORCE_REBUILD = STRIMZI_DOMAIN + "force-rebuild";
+    // Use to pause resource reconciliation
+    public static final String ANNO_STRIMZI_IO_PAUSE_RECONCILIATION = STRIMZI_DOMAIN + "pause-reconciliation";
     public static final String ANNO_STRIMZI_IO_MANUAL_ROLLING_UPDATE = STRIMZI_DOMAIN + "manual-rolling-update";
-    @Deprecated
-    public static final String ANNO_OP_STRIMZI_IO_MANUAL_ROLLING_UPDATE = "operator." + Annotations.STRIMZI_DOMAIN + "manual-rolling-update";
+    // This annotation with related possible values (approve, stop, refresh) is set by the user for interacting
+    // with the rebalance operator in order to start, stop, or refresh rebalancing proposals and operations.
+    public static final String ANNO_STRIMZI_IO_REBALANCE = STRIMZI_DOMAIN + "rebalance";
+
+    /**
+     * Annotations for restarting KafkaConnector and KafkaMirrorMaker2 connectors or tasks
+     */
+    public static final String ANNO_STRIMZI_IO_RESTART = STRIMZI_DOMAIN + "restart";
+    public static final String ANNO_STRIMZI_IO_RESTART_CONNECTOR = STRIMZI_DOMAIN + "restart-connector";
+    public static final String ANNO_STRIMZI_IO_RESTART_TASK = STRIMZI_DOMAIN + "restart-task";
+    public static final String ANNO_STRIMZI_IO_RESTART_CONNECTOR_TASK = STRIMZI_DOMAIN + "restart-connector-task";
+    public static final String ANNO_STRIMZI_IO_RESTART_CONNECTOR_TASK_PATTERN_CONNECTOR = "connector";
+    public static final String ANNO_STRIMZI_IO_RESTART_CONNECTOR_TASK_PATTERN_TASK = "task";
+    public static final Pattern ANNO_STRIMZI_IO_RESTART_CONNECTOR_TASK_PATTERN = Pattern.compile("^(?<" +
+        ANNO_STRIMZI_IO_RESTART_CONNECTOR_TASK_PATTERN_CONNECTOR +
+        ">.+):(?<" +
+        ANNO_STRIMZI_IO_RESTART_CONNECTOR_TASK_PATTERN_TASK +
+        ">\\d+)$");
 
     public static final String ANNO_DEP_KUBE_IO_REVISION = "deployment.kubernetes.io/revision";
+
+    /**
+     * Whitelist of predicates that allows existing load balancer service annotations to be retained while reconciling the resources.
+     */
+    public static final List<Predicate<String>> LOADBALANCER_ANNOTATION_WHITELIST = List.of(
+        annotation -> annotation.startsWith("cattle.io/"),
+        annotation -> annotation.startsWith("field.cattle.io")
+    );
 
     private static Map<String, String> annotations(ObjectMeta metadata) {
         Map<String, String> annotations = metadata.getAnnotations();
@@ -44,6 +86,11 @@ public class Annotations {
 
     public static boolean booleanAnnotation(HasMetadata resource, String annotation, boolean defaultValue, String... deprecatedAnnotations) {
         ObjectMeta metadata = resource.getMetadata();
+        String str = annotation(annotation, null, metadata, deprecatedAnnotations);
+        return str != null ? parseBoolean(str) : defaultValue;
+    }
+
+    public static boolean booleanAnnotation(ObjectMeta metadata, String annotation, boolean defaultValue, String... deprecatedAnnotations) {
         String str = annotation(annotation, null, metadata, deprecatedAnnotations);
         return str != null ? parseBoolean(str) : defaultValue;
     }
@@ -119,6 +166,20 @@ public class Annotations {
             }
         }
         return value;
+    }
+
+    /**
+     * Whether the provided resource instance is a KafkaConnector and has the strimzi.io/pause-reconciliation annotation
+     *
+     * @param resource resource instance to check
+     * @return true if the provided resource instance has the strimzi.io/pause-reconciliation annotation; false otherwise
+     */
+    public static boolean isReconciliationPausedWithAnnotation(CustomResource resource) {
+        return Annotations.booleanAnnotation(resource, ANNO_STRIMZI_IO_PAUSE_RECONCILIATION, false);
+    }
+
+    public static boolean isReconciliationPausedWithAnnotation(ObjectMeta metadata) {
+        return Annotations.booleanAnnotation(metadata, ANNO_STRIMZI_IO_PAUSE_RECONCILIATION, false);
     }
 
 }

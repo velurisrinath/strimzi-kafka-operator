@@ -7,19 +7,18 @@ package io.strimzi.operator.common.operator.resource;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.api.model.apps.DeploymentBuilder;
 import io.fabric8.kubernetes.api.model.apps.DeploymentList;
-import io.fabric8.kubernetes.api.model.apps.DoneableDeployment;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.AppsAPIGroupDSL;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.RollableScalableResource;
+import io.strimzi.operator.common.Annotations;
 import io.vertx.core.Vertx;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 public class DeploymentOperatorTest extends
-        ScalableResourceOperatorTest<KubernetesClient, Deployment, DeploymentList,
-                                DoneableDeployment, RollableScalableResource<Deployment, DoneableDeployment>> {
+        ScalableResourceOperatorTest<KubernetesClient, Deployment, DeploymentList, RollableScalableResource<Deployment>> {
 
     @Override
     protected Class<KubernetesClient> clientType() {
@@ -33,7 +32,29 @@ public class DeploymentOperatorTest extends
 
     @Override
     protected Deployment resource() {
-        return new DeploymentBuilder().withNewMetadata().withNamespace(NAMESPACE).withName(RESOURCE_NAME).endMetadata().build();
+        return new DeploymentBuilder()
+                .withNewMetadata()
+                    .withNamespace(NAMESPACE)
+                    .withName(RESOURCE_NAME)
+                    .addToAnnotations(Annotations.ANNO_DEP_KUBE_IO_REVISION, "test")
+                .endMetadata()
+                .withNewSpec()
+                    .withNewStrategy()
+                        .withNewType("RollingUpdate")
+                    .endStrategy()
+                .endSpec()
+                .build();
+    }
+
+    @Override
+    protected Deployment modifiedResource() {
+        return new DeploymentBuilder(resource())
+                .editSpec()
+                    .editStrategy()
+                        .withNewType("Recreate")
+                    .endStrategy()
+                .endSpec()
+                .build();
     }
 
     @Override

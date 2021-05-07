@@ -6,11 +6,9 @@ package io.strimzi.operator.common.operator.resource;
 
 import io.fabric8.kubernetes.api.model.ContainerBuilder;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
-import io.fabric8.kubernetes.client.dsl.ScalableResource;
 import io.fabric8.openshift.api.model.DeploymentConfig;
 import io.fabric8.openshift.api.model.DeploymentConfigBuilder;
 import io.fabric8.openshift.api.model.DeploymentConfigList;
-import io.fabric8.openshift.api.model.DoneableDeploymentConfig;
 import io.fabric8.openshift.client.OpenShiftClient;
 import io.fabric8.openshift.client.dsl.DeployableScalableResource;
 import io.vertx.core.Vertx;
@@ -18,8 +16,7 @@ import io.vertx.core.Vertx;
 import static org.mockito.Mockito.when;
 
 public class DeploymentConfigOperatorTest extends ScalableResourceOperatorTest<OpenShiftClient, DeploymentConfig,
-        DeploymentConfigList, DoneableDeploymentConfig,
-        DeployableScalableResource<DeploymentConfig, DoneableDeploymentConfig>> {
+        DeploymentConfigList, DeployableScalableResource<DeploymentConfig>> {
 
     @Override
     protected Class<OpenShiftClient> clientType() {
@@ -27,13 +24,14 @@ public class DeploymentConfigOperatorTest extends ScalableResourceOperatorTest<O
     }
 
     @Override
-    protected Class<ScalableResource> resourceType() {
-        return ScalableResource.class;
+    protected Class<DeployableScalableResource> resourceType() {
+        return DeployableScalableResource.class;
     }
 
     @Override
     protected DeploymentConfig resource() {
-        return new DeploymentConfigBuilder().withNewMetadata()
+        return new DeploymentConfigBuilder()
+            .withNewMetadata()
                 .withNamespace(NAMESPACE)
                 .withName(RESOURCE_NAME)
             .endMetadata()
@@ -47,10 +45,20 @@ public class DeploymentConfigOperatorTest extends ScalableResourceOperatorTest<O
     }
 
     @Override
+    protected DeploymentConfig modifiedResource() {
+        return new DeploymentConfigBuilder(resource())
+                .editSpec()
+                    .editTemplate()
+                        .editSpec()
+                            .addToContainers(new ContainerBuilder().withImage("img2").build())
+                        .endSpec()
+                    .endTemplate()
+                .endSpec()
+                .build();
+    }
+
+    @Override
     protected void mocker(OpenShiftClient mockClient, MixedOperation op) {
-        /*ExtensionsAPIGroupDSL mockExt = mock(ExtensionsAPIGroupDSL.class);
-        when(mockExt.deployments()).thenReturn(op);
-        when(mockClient.extensions()).thenReturn(mockExt);*/
         when(mockClient.deploymentConfigs()).thenReturn(op);
     }
 

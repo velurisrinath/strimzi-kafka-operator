@@ -4,13 +4,11 @@
  */
 package io.strimzi.operator.common.operator.resource;
 
-import io.fabric8.kubernetes.api.model.apiextensions.CustomResourceDefinition;
 import io.fabric8.kubernetes.client.KubernetesClient;
-import io.strimzi.api.kafka.Crds;
 import io.strimzi.api.kafka.KafkaConnectS2IList;
-import io.strimzi.api.kafka.model.DoneableKafkaConnectS2I;
 import io.strimzi.api.kafka.model.KafkaConnectS2I;
 import io.strimzi.api.kafka.model.KafkaConnectS2IBuilder;
+import io.strimzi.test.TestUtils;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import org.apache.logging.log4j.LogManager;
@@ -27,18 +25,23 @@ import static org.hamcrest.MatcherAssert.assertThat;
  * test them against real clusters.
  */
 @ExtendWith(VertxExtension.class)
-public class KafkaConnectS2ICrdOperatorIT extends AbstractCustomResourceOperatorIT<KubernetesClient, KafkaConnectS2I, KafkaConnectS2IList, DoneableKafkaConnectS2I> {
+public class KafkaConnectS2ICrdOperatorIT extends AbstractCustomResourceOperatorIT<KubernetesClient, KafkaConnectS2I, KafkaConnectS2IList> {
     protected static final Logger log = LogManager.getLogger(KafkaConnectS2ICrdOperatorIT.class);
 
     @Override
     protected CrdOperator operator() {
-        return new CrdOperator(vertx, client, KafkaConnectS2I.class, KafkaConnectS2IList.class, DoneableKafkaConnectS2I.class, Crds.kafkaConnectS2I());
+        return new CrdOperator(vertx, client, KafkaConnectS2I.class, KafkaConnectS2IList.class, KafkaConnectS2I.RESOURCE_KIND);
 
     }
 
     @Override
-    protected CustomResourceDefinition getCrd() {
-        return Crds.kafkaConnectS2I();
+    protected String getCrd() {
+        return TestUtils.CRD_KAFKA_CONNECT_S2I;
+    }
+
+    @Override
+    protected String getCrdName() {
+        return KafkaConnectS2I.CRD_NAME;
     }
 
     @Override
@@ -46,14 +49,15 @@ public class KafkaConnectS2ICrdOperatorIT extends AbstractCustomResourceOperator
         return "kafka-connects2i-crd-it-namespace";
     }
 
-    protected KafkaConnectS2I getResource() {
+    @Override
+    protected KafkaConnectS2I getResource(String resourceName) {
         return new KafkaConnectS2IBuilder()
-                .withApiVersion(KafkaConnectS2I.RESOURCE_GROUP + "/" + KafkaConnectS2I.V1BETA1)
                 .withNewMetadata()
-                .withName(RESOURCE_NAME)
-                .withNamespace(getNamespace())
+                    .withName(resourceName)
+                    .withNamespace(getNamespace())
                 .endMetadata()
                 .withNewSpec()
+                    .withNewBootstrapServers("localhost:9092")
                 .endSpec()
                 .withNewStatus()
                 .endStatus()
@@ -64,9 +68,9 @@ public class KafkaConnectS2ICrdOperatorIT extends AbstractCustomResourceOperator
     protected KafkaConnectS2I getResourceWithModifications(KafkaConnectS2I resourceInCluster) {
         return new KafkaConnectS2IBuilder(resourceInCluster)
                 .editSpec()
-                .withNewLivenessProbe()
-                .withInitialDelaySeconds(14)
-                .endLivenessProbe()
+                    .withNewLivenessProbe()
+                        .withInitialDelaySeconds(14)
+                    .endLivenessProbe()
                 .endSpec()
                 .build();
 
@@ -76,7 +80,7 @@ public class KafkaConnectS2ICrdOperatorIT extends AbstractCustomResourceOperator
     protected KafkaConnectS2I getResourceWithNewReadyStatus(KafkaConnectS2I resourceInCluster) {
         return new KafkaConnectS2IBuilder(resourceInCluster)
                 .withNewStatus()
-                .withConditions(READY_CONDITION)
+                    .withConditions(READY_CONDITION)
                 .endStatus()
                 .build();
     }

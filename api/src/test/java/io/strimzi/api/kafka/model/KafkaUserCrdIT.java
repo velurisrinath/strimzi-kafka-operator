@@ -5,9 +5,15 @@
 package io.strimzi.api.kafka.model;
 
 import io.strimzi.test.TestUtils;
+import io.strimzi.test.k8s.exceptions.KubeClusterException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * The purpose of this test is to confirm that we can create a
@@ -20,30 +26,39 @@ public class KafkaUserCrdIT extends AbstractCrdIT {
 
     @Test
     void testKafkaUserV1alpha1() {
-        assumeKube1_11Plus();
-        createDelete(KafkaUser.class, "KafkaUserV1alpha1.yaml");
+        createDeleteCustomResource("KafkaUserV1alpha1.yaml");
+    }
+
+    @Test
+    void testKafkaUserIsNotScaling() {
+        assertThrows(KubeClusterException.class, () -> createScaleDelete(KafkaUser.class, "KafkaUser.yaml"));
     }
 
     @Test
     void testKafkaUserV1beta1() {
-        createDelete(KafkaUser.class, "KafkaUserV1beta1.yaml");
+        createDeleteCustomResource("KafkaUserV1beta1.yaml");
     }
 
     @Test
     void testKafkaUserMinimal() {
-        createDelete(KafkaUser.class, "KafkaUser-minimal.yaml");
+        createDeleteCustomResource("KafkaUser-minimal.yaml");
     }
 
+    @Disabled("See https://github.com/strimzi/strimzi-kafka-operator/issues/4606")
     @Test
-    void testKafkaUserWithExtraProperty() {
-        createDelete(KafkaUser.class, "KafkaUser-with-extra-property.yaml");
+    void testCreateKafkaUserWithExtraProperty() {
+        Throwable exception = assertThrows(
+            KubeClusterException.class,
+            () -> createDeleteCustomResource("KafkaUser-with-extra-property.yaml"));
+
+        assertThat(exception.getMessage(), containsString("unknown field \"thisPropertyIsNotInTheSchema\""));
     }
 
     @BeforeAll
     void setupEnvironment() {
         cluster.createNamespace(NAMESPACE);
         cluster.createCustomResources(TestUtils.CRD_KAFKA_USER);
-        cluster.cmdClient().waitForResourceCreation("crd", "kafkausers.kafka.strimzi.io");
+        cluster.waitForCustomResourceDefinition("kafkausers.kafka.strimzi.io");
     }
 
     @AfterAll

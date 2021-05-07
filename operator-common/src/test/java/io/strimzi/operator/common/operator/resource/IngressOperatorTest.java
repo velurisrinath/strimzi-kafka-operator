@@ -4,13 +4,13 @@
  */
 package io.strimzi.operator.common.operator.resource;
 
-import io.fabric8.kubernetes.api.model.extensions.DoneableIngress;
-import io.fabric8.kubernetes.api.model.extensions.Ingress;
-import io.fabric8.kubernetes.api.model.extensions.IngressBuilder;
-import io.fabric8.kubernetes.api.model.extensions.IngressList;
+import io.fabric8.kubernetes.api.model.networking.v1.Ingress;
+import io.fabric8.kubernetes.api.model.networking.v1.IngressBuilder;
+import io.fabric8.kubernetes.api.model.networking.v1.IngressList;
 import io.fabric8.kubernetes.client.KubernetesClient;
-import io.fabric8.kubernetes.client.dsl.ExtensionsAPIGroupDSL;
+import io.fabric8.kubernetes.client.V1NetworkAPIGroupDSL;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
+import io.fabric8.kubernetes.client.dsl.NetworkAPIGroupDSL;
 import io.fabric8.kubernetes.client.dsl.Resource;
 import io.vertx.core.Vertx;
 
@@ -18,7 +18,7 @@ import static java.util.Collections.singletonMap;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-public class IngressOperatorTest extends AbstractResourceOperatorTest<KubernetesClient, Ingress, IngressList, DoneableIngress, Resource<Ingress, DoneableIngress>> {
+public class IngressOperatorTest extends AbstractResourceOperatorTest<KubernetesClient, Ingress, IngressList, Resource<Ingress>> {
     @Override
     protected Class<KubernetesClient> clientType() {
         return KubernetesClient.class;
@@ -41,14 +41,27 @@ public class IngressOperatorTest extends AbstractResourceOperatorTest<Kubernetes
     }
 
     @Override
-    protected void mocker(KubernetesClient mockClient, MixedOperation op) {
-        ExtensionsAPIGroupDSL mockExt = mock(ExtensionsAPIGroupDSL.class);
-        when(mockExt.ingresses()).thenReturn(op);
-        when(mockClient.extensions()).thenReturn(mockExt);
+    protected Ingress modifiedResource() {
+        return new IngressBuilder()
+                .withNewMetadata()
+                    .withName(RESOURCE_NAME)
+                    .withNamespace(NAMESPACE)
+                    .withLabels(singletonMap("foo2", "bar2"))
+                .endMetadata()
+                .build();
     }
 
     @Override
-    protected AbstractResourceOperator<KubernetesClient, Ingress, IngressList, DoneableIngress, Resource<Ingress, DoneableIngress>> createResourceOperations(Vertx vertx, KubernetesClient mockClient) {
+    protected void mocker(KubernetesClient mockClient, MixedOperation op) {
+        NetworkAPIGroupDSL network = mock(NetworkAPIGroupDSL.class);
+        V1NetworkAPIGroupDSL v1 = mock(V1NetworkAPIGroupDSL.class);
+        when(network.v1()).thenReturn(v1);
+        when(v1.ingresses()).thenReturn(op);
+        when(mockClient.network()).thenReturn(network);
+    }
+
+    @Override
+    protected AbstractResourceOperator<KubernetesClient, Ingress, IngressList, Resource<Ingress>> createResourceOperations(Vertx vertx, KubernetesClient mockClient) {
         return new IngressOperator(vertx, mockClient);
     }
 }

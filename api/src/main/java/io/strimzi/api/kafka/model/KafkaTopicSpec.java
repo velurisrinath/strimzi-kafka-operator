@@ -5,7 +5,6 @@
 package io.strimzi.api.kafka.model;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import io.strimzi.crdgenerator.annotations.Description;
 import io.strimzi.crdgenerator.annotations.Maximum;
@@ -13,11 +12,7 @@ import io.strimzi.crdgenerator.annotations.Minimum;
 import io.sundr.builder.annotations.Buildable;
 import lombok.EqualsAndHashCode;
 
-import java.io.Serializable;
-import java.util.HashMap;
 import java.util.Map;
-
-import static java.util.Collections.emptyMap;
 
 @Buildable(
         editableEnabled = false,
@@ -26,7 +21,7 @@ import static java.util.Collections.emptyMap;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonPropertyOrder({"partitions", "replicas", "config"})
 @EqualsAndHashCode
-public class KafkaTopicSpec implements UnknownPropertyPreserving, Serializable {
+public class KafkaTopicSpec extends Spec {
 
     private static final long serialVersionUID = 1L;
 
@@ -37,8 +32,6 @@ public class KafkaTopicSpec implements UnknownPropertyPreserving, Serializable {
     private Integer replicas;
 
     private Map<String, Object> config;
-
-    private Map<String, Object> additionalProperties;
 
     @Description("The name of the topic. " +
             "When absent this will default to the metadata.name of the topic. " +
@@ -56,9 +49,9 @@ public class KafkaTopicSpec implements UnknownPropertyPreserving, Serializable {
             "This cannot be decreased after topic creation. " +
             "It can be increased after topic creation, " +
             "but it is important to understand the consequences that has, " +
-            "especially for topics with semantic partitioning.")
+            "especially for topics with semantic partitioning. " +
+            "When absent this will default to the broker configuration for `num.partitions`.")
     @Minimum(1)
-    @JsonProperty(required = true)
     public Integer getPartitions() {
         return partitions;
     }
@@ -67,10 +60,10 @@ public class KafkaTopicSpec implements UnknownPropertyPreserving, Serializable {
         this.partitions = partitions;
     }
 
-    @Description("The number of replicas the topic should have.")
+    @Description("The number of replicas the topic should have. " +
+            "When absent this will default to the broker configuration for `default.replication.factor`.")
     @Minimum(1)
     @Maximum(Short.MAX_VALUE)
-    @JsonProperty(required = true)
     public Integer getReplicas() {
         return replicas;
     }
@@ -86,18 +79,5 @@ public class KafkaTopicSpec implements UnknownPropertyPreserving, Serializable {
 
     public void setConfig(Map<String, Object> config) {
         this.config = config;
-    }
-
-    @Override
-    public Map<String, Object> getAdditionalProperties() {
-        return this.additionalProperties != null ? this.additionalProperties : emptyMap();
-    }
-
-    @Override
-    public void setAdditionalProperty(String name, Object value) {
-        if (this.additionalProperties == null) {
-            this.additionalProperties = new HashMap<>();
-        }
-        this.additionalProperties.put(name, value);
     }
 }

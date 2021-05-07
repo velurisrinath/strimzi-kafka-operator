@@ -6,6 +6,7 @@ package io.strimzi.operator.cluster.model;
 
 import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.EnvVar;
+import io.fabric8.kubernetes.api.model.HasMetadata;
 import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.ResourceRequirements;
 import io.fabric8.kubernetes.api.model.ResourceRequirementsBuilder;
@@ -16,19 +17,37 @@ import io.strimzi.operator.common.model.Labels;
 import io.strimzi.test.TestUtils;
 
 import io.fabric8.kubernetes.api.model.OwnerReference;
-import org.junit.jupiter.api.Test;
+import io.strimzi.test.annotations.ParallelSuite;
+import io.strimzi.test.annotations.ParallelTest;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-import static java.util.Collections.emptyList;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
 
+@ParallelSuite
 public class AbstractModelTest {
+
+    // Implement AbstractModel to test the abstract class
+    private class Model extends AbstractModel   {
+        public Model(HasMetadata resource) {
+            super(resource, "model-app");
+        }
+
+        @Override
+        protected String getDefaultLogConfigFileName() {
+            return null;
+        }
+
+        @Override
+        protected List<Container> getContainers(ImagePullPolicy imagePullPolicy) {
+            return null;
+        }
+    }
 
     private static JvmOptions jvmOptions(String xmx, String xms) {
         JvmOptions result = new JvmOptions();
@@ -37,7 +56,7 @@ public class AbstractModelTest {
         return result;
     }
 
-    @Test
+    @ParallelTest
     public void testJvmMemoryOptionsExplicit() {
         Map<String, String> env = getStringStringMap("4", "4",
                 0.5, 4_000_000_000L, null);
@@ -51,17 +70,7 @@ public class AbstractModelTest {
                 .withNewMetadata()
                 .endMetadata()
                 .build();
-        AbstractModel am = new AbstractModel(resource, "") {
-            @Override
-            protected String getDefaultLogConfigFileName() {
-                return "";
-            }
-
-            @Override
-            protected List<Container> getContainers(ImagePullPolicy imagePullPolicy) {
-                return emptyList();
-            }
-        };
+        AbstractModel am = new Model(resource);
 
         am.setLabels(Labels.forStrimziCluster("foo"));
         am.setJvmOptions(jvmOptions(xmx, xms));
@@ -71,7 +80,7 @@ public class AbstractModelTest {
         return envVars.stream().collect(Collectors.toMap(e -> e.getName(), e -> e.getValue()));
     }
 
-    @Test
+    @ParallelTest
     public void testJvmMemoryOptionsXmsOnly() {
         Map<String, String> env = getStringStringMap(null, "4",
                 0.5, 5_000_000_000L, null);
@@ -80,7 +89,7 @@ public class AbstractModelTest {
         assertThat(env.get(AbstractModel.ENV_VAR_DYNAMIC_HEAP_MAX), is(nullValue()));
     }
 
-    @Test
+    @ParallelTest
     public void testJvmMemoryOptionsXmxOnly() {
         Map<String, String> env = getStringStringMap("4", null,
                 0.5, 5_000_000_000L, null);
@@ -90,7 +99,7 @@ public class AbstractModelTest {
     }
 
 
-    @Test
+    @ParallelTest
     public void testJvmMemoryOptionsDefaultWithNoMemoryLimitOrJvmOptions() {
         Map<String, String> env = getStringStringMap(null, null,
                 0.5, 5_000_000_000L, null);
@@ -104,7 +113,7 @@ public class AbstractModelTest {
                 .addToRequests("memory", new Quantity("16000000000")).build();
     }
 
-    @Test
+    @ParallelTest
     public void testJvmMemoryOptionsDefaultWithMemoryLimit() {
         Map<String, String> env = getStringStringMap(null, "4",
                 0.5, 5_000_000_000L, getResourceRequest());
@@ -113,7 +122,7 @@ public class AbstractModelTest {
         assertThat(env.get(AbstractModel.ENV_VAR_DYNAMIC_HEAP_MAX), is("5000000000"));
     }
 
-    @Test
+    @ParallelTest
     public void testJvmMemoryOptionsMemoryRequest() {
         Map<String, String> env = getStringStringMap(null, null,
                 0.7, 10_000_000_000L, getResourceRequest());
@@ -122,17 +131,11 @@ public class AbstractModelTest {
         assertThat(env.get(AbstractModel.ENV_VAR_DYNAMIC_HEAP_MAX), is("10000000000"));
     }
 
-    @Test
+    @ParallelTest
     public void testJvmPerformanceOptions() {
         JvmOptions opts = TestUtils.fromJson("{}", JvmOptions.class);
 
         assertThat(getPerformanceOptions(opts), is(nullValue()));
-
-        opts = TestUtils.fromJson("{" +
-                "  \"-server\": \"true\"" +
-                "}", JvmOptions.class);
-
-        assertThat(getPerformanceOptions(opts), is("-server"));
 
         opts = TestUtils.fromJson("{" +
                 "    \"-XX\":" +
@@ -151,17 +154,7 @@ public class AbstractModelTest {
                 .endMetadata()
                 .build();
 
-        AbstractModel am = new AbstractModel(kafka, "") {
-            @Override
-            protected String getDefaultLogConfigFileName() {
-                return "";
-            }
-
-            @Override
-            protected List<Container> getContainers(ImagePullPolicy imagePullPolicy) {
-                return emptyList();
-            }
-        };
+        AbstractModel am = new Model(kafka);
 
         am.setLabels(Labels.forStrimziCluster("foo"));
         am.setJvmOptions(opts);
@@ -175,7 +168,7 @@ public class AbstractModelTest {
         }
     }
 
-    @Test
+    @ParallelTest
     public void testOwnerReference() {
         Kafka kafka = new KafkaBuilder()
                 .withNewMetadata()
@@ -184,17 +177,7 @@ public class AbstractModelTest {
                 .endMetadata()
                 .build();
 
-        AbstractModel am = new AbstractModel(kafka, "my-app") {
-            @Override
-            protected String getDefaultLogConfigFileName() {
-                return "";
-            }
-
-            @Override
-            protected List<Container> getContainers(ImagePullPolicy imagePullPolicy) {
-                return emptyList();
-            }
-        };
+        AbstractModel am = new Model(kafka);
         am.setLabels(Labels.forStrimziCluster("foo"));
         am.setOwnerReference(kafka);
 
@@ -206,7 +189,7 @@ public class AbstractModelTest {
         assertThat(ref.getUid(), is(kafka.getMetadata().getUid()));
     }
 
-    @Test
+    @ParallelTest
     public void testDetermineImagePullPolicy()  {
         Kafka kafka = new KafkaBuilder()
                 .withNewMetadata()
@@ -215,23 +198,17 @@ public class AbstractModelTest {
                 .endMetadata()
                 .build();
 
-        AbstractModel am = new AbstractModel(kafka, "my-app") {
-            @Override
-            protected String getDefaultLogConfigFileName() {
-                return "";
-            }
-
-            @Override
-            protected List<Container> getContainers(ImagePullPolicy imagePullPolicy) {
-                return emptyList();
-            }
-        };
+        AbstractModel am = new Model(kafka);
         am.setLabels(Labels.forStrimziCluster("foo"));
 
         assertThat(am.determineImagePullPolicy(ImagePullPolicy.ALWAYS, "docker.io/repo/image:tag"), is(ImagePullPolicy.ALWAYS.toString()));
         assertThat(am.determineImagePullPolicy(ImagePullPolicy.IFNOTPRESENT, "docker.io/repo/image:tag"), is(ImagePullPolicy.IFNOTPRESENT.toString()));
+        assertThat(am.determineImagePullPolicy(ImagePullPolicy.IFNOTPRESENT, "docker.io/repo/image:latest"), is(ImagePullPolicy.IFNOTPRESENT.toString()));
         assertThat(am.determineImagePullPolicy(ImagePullPolicy.NEVER, "docker.io/repo/image:tag"), is(ImagePullPolicy.NEVER.toString()));
+        assertThat(am.determineImagePullPolicy(ImagePullPolicy.NEVER, "docker.io/repo/image:latest-kafka-2.7.0"), is(ImagePullPolicy.NEVER.toString()));
         assertThat(am.determineImagePullPolicy(null, "docker.io/repo/image:latest"), is(ImagePullPolicy.ALWAYS.toString()));
         assertThat(am.determineImagePullPolicy(null, "docker.io/repo/image:not-so-latest"), is(ImagePullPolicy.IFNOTPRESENT.toString()));
+        assertThat(am.determineImagePullPolicy(null, "docker.io/repo/image:latest-kafka-2.7.0"), is(ImagePullPolicy.ALWAYS.toString()));
     }
+
 }

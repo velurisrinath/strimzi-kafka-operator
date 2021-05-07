@@ -4,22 +4,23 @@
  */
 package io.strimzi.systemtest.olm;
 
-import io.strimzi.systemtest.resources.OlmResource;
-import io.strimzi.systemtest.resources.ResourceManager;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import io.strimzi.systemtest.resources.specific.OlmResource;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.junit.jupiter.api.extension.ExtensionContext;
+
+import static io.strimzi.systemtest.Constants.OLM;
 
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-public class AllNamespacesST extends OlmBaseST {
+@Tag(OLM)
+public class AllNamespacesST extends OlmAbstractST {
 
     public static final String NAMESPACE = "olm-namespace";
-
-    private static final Logger LOGGER = LogManager.getLogger(AllNamespacesST.class);
+    public static OlmResource olmResource;
 
     @Test
     @Order(1)
@@ -29,8 +30,8 @@ public class AllNamespacesST extends OlmBaseST {
 
     @Test
     @Order(2)
-    void testDeployExampleKafkaUser() {
-        doTestDeployExampleKafkaUser();
+    void testDeployExampleKafkaUser(ExtensionContext extensionContext) {
+        doTestDeployExampleKafkaUser(extensionContext);
     }
 
     @Test
@@ -69,12 +70,19 @@ public class AllNamespacesST extends OlmBaseST {
         doTestDeployExampleKafkaMirrorMaker2();
     }
 
+    @Test
+    @Order(9)
+    void testDeployExampleKafkaRebalance(ExtensionContext extensionContext) {
+        doTestDeployExampleKafkaRebalance(extensionContext);
+    }
 
     @BeforeAll
-    void setup() throws Exception {
-        ResourceManager.setClassResources();
+    void setup(ExtensionContext extensionContext) {
         cluster.setNamespace(cluster.getDefaultOlmNamespace());
-        OlmResource.clusterOperator(cluster.getDefaultOlmNamespace());
+
+        olmResource = new OlmResource(cluster.getDefaultOlmNamespace());
+        olmResource.create(extensionContext);
+
         cluster.setNamespace(NAMESPACE);
         cluster.createNamespace(NAMESPACE);
     }

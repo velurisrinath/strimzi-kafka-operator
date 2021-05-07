@@ -31,7 +31,6 @@ public class JvmOptions implements UnknownPropertyPreserving, Serializable {
 
     private String xmx;
     private String xms;
-    private Boolean server;
     private boolean gcLoggingEnabled = false;
     private List<SystemProperty> javaSystemProperties;
     private Map<String, String> xx;
@@ -59,17 +58,8 @@ public class JvmOptions implements UnknownPropertyPreserving, Serializable {
         this.xms = xms;
     }
 
-    @JsonProperty("-server")
-    @Description("-server option to to the JVM")
-    public Boolean isServer() {
-        return server;
-    }
-
-    public void setServer(Boolean server) {
-        this.server = server;
-    }
-
     @Description("Specifies whether the Garbage Collection logging is enabled. The default is false.")
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
     public boolean isGcLoggingEnabled() {
         return gcLoggingEnabled;
     }

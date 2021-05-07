@@ -8,8 +8,11 @@ import io.strimzi.test.TestUtils;
 import io.strimzi.test.k8s.exceptions.KubeClusterException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
@@ -24,38 +27,39 @@ public class KafkaTopicCrdIT extends AbstractCrdIT {
 
     @Test
     void testKafkaTopicV1alpha1() {
-        assumeKube1_11Plus();
-        createDelete(KafkaTopic.class, "KafkaTopicV1alpha1.yaml");
+        createDeleteCustomResource("KafkaTopicV1alpha1.yaml");
     }
+
+    @Test
+    void testKafkaTopicIsNotScaling() {
+        assertThrows(KubeClusterException.class, () -> createScaleDelete(KafkaTopic.class, "KafkaTopic.yaml"));
+    }
+
     @Test
     void testKafkaTopicV1beta1() {
-        createDelete(KafkaTopic.class, "KafkaTopicV1beta1.yaml");
+        createDeleteCustomResource("KafkaTopicV1beta1.yaml");
     }
 
     @Test
     void testKafkaTopicMinimal() {
-        createDelete(KafkaTopic.class, "KafkaTopic-minimal.yaml");
+        createDeleteCustomResource("KafkaTopic-minimal.yaml");
     }
 
+    @Disabled("See https://github.com/strimzi/strimzi-kafka-operator/issues/4606")
     @Test
-    void testKafkaTopicWithExtraProperty() {
-        createDelete(KafkaTopic.class, "KafkaTopic-with-extra-property.yaml");
-    }
-
-    @Test
-    void testKafkaTopicWithMissingProperty() {
+    void testCreateKafkaTopicWithExtraProperty() {
         Throwable exception = assertThrows(
-            KubeClusterException.InvalidResource.class,
-            () -> createDelete(KafkaTopic.class, "KafkaTopic-with-missing-required-property.yaml"));
+            KubeClusterException.class,
+            () -> createDeleteCustomResource("KafkaTopic-with-extra-property.yaml"));
 
-        assertMissingRequiredPropertiesMessage(exception.getMessage(), "spec.partitions", "spec.replicas");
+        assertThat(exception.getMessage(), containsString("unknown field \"foo\""));
     }
 
     @BeforeAll
     void setupEnvironment() {
         cluster.createNamespace(NAMESPACE);
         cluster.createCustomResources(TestUtils.CRD_TOPIC);
-        cluster.cmdClient().waitForResourceCreation("crd", "kafkatopics.kafka.strimzi.io");
+        cluster.waitForCustomResourceDefinition("kafkatopics.kafka.strimzi.io");
     }
 
     @AfterAll

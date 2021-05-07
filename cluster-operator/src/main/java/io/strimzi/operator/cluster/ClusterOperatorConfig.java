@@ -11,7 +11,10 @@ import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.model.NoImageException;
 import io.strimzi.operator.common.InvalidConfigurationException;
 import io.strimzi.operator.common.Util;
+import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.resource.AbstractWatchableResourceOperator;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -29,12 +32,24 @@ import static java.util.Collections.unmodifiableSet;
  * Cluster Operator configuration
  */
 public class ClusterOperatorConfig {
+    private static final Logger log = LogManager.getLogger(ClusterOperatorConfig.class.getName());
+
     public static final String STRIMZI_NAMESPACE = "STRIMZI_NAMESPACE";
     public static final String STRIMZI_FULL_RECONCILIATION_INTERVAL_MS = "STRIMZI_FULL_RECONCILIATION_INTERVAL_MS";
     public static final String STRIMZI_OPERATION_TIMEOUT_MS = "STRIMZI_OPERATION_TIMEOUT_MS";
-    public static final String STRIMZI_CREATE_CLUSTER_ROLES = "STRIMZI_CREATE_CLUSTER_ROLES";
+    public static final String STRIMZI_CONNECT_BUILD_TIMEOUT_MS = "STRIMZI_CONNECT_BUILD_TIMEOUT_MS";
     public static final String STRIMZI_IMAGE_PULL_POLICY = "STRIMZI_IMAGE_PULL_POLICY";
     public static final String STRIMZI_IMAGE_PULL_SECRETS = "STRIMZI_IMAGE_PULL_SECRETS";
+    public static final String STRIMZI_OPERATOR_NAMESPACE = "STRIMZI_OPERATOR_NAMESPACE";
+    public static final String STRIMZI_OPERATOR_NAMESPACE_LABELS = "STRIMZI_OPERATOR_NAMESPACE_LABELS";
+    public static final String STRIMZI_CUSTOM_RESOURCE_SELECTOR = "STRIMZI_CUSTOM_RESOURCE_SELECTOR";
+    public static final String STRIMZI_FEATURE_GATES = "STRIMZI_FEATURE_GATES";
+
+    // Feature Flags
+    public static final String STRIMZI_RBAC_SCOPE = "STRIMZI_RBAC_SCOPE";
+    public static final RbacScope DEFAULT_STRIMZI_RBAC_SCOPE = RbacScope.CLUSTER;
+    public static final String STRIMZI_CREATE_CLUSTER_ROLES = "STRIMZI_CREATE_CLUSTER_ROLES";
+    public static final boolean DEFAULT_CREATE_CLUSTER_ROLES = false;
 
     // Env vars for configuring images
     public static final String STRIMZI_KAFKA_IMAGES = "STRIMZI_KAFKA_IMAGES";
@@ -43,8 +58,7 @@ public class ClusterOperatorConfig {
     public static final String STRIMZI_KAFKA_MIRROR_MAKER_IMAGES = "STRIMZI_KAFKA_MIRROR_MAKER_IMAGES";
     public static final String STRIMZI_KAFKA_MIRROR_MAKER_2_IMAGES = "STRIMZI_KAFKA_MIRROR_MAKER_2_IMAGES";
     public static final String STRIMZI_DEFAULT_TLS_SIDECAR_ENTITY_OPERATOR_IMAGE = "STRIMZI_DEFAULT_TLS_SIDECAR_ENTITY_OPERATOR_IMAGE";
-    public static final String STRIMZI_DEFAULT_TLS_SIDECAR_KAFKA_IMAGE = "STRIMZI_DEFAULT_TLS_SIDECAR_KAFKA_IMAGE";
-    public static final String STRIMZI_DEFAULT_TLS_SIDECAR_ZOOKEEPER_IMAGE = "STRIMZI_DEFAULT_TLS_SIDECAR_ZOOKEEPER_IMAGE";
+    public static final String STRIMZI_DEFAULT_TLS_SIDECAR_KAFKA_IMAGE = "STRIMZI_DEFAULT_TLS_SIDECAR_KAFKA_IMAGE"; // Used only to produce warning if defined at startup
     public static final String STRIMZI_DEFAULT_TLS_SIDECAR_CRUISE_CONTROL_IMAGE = "STRIMZI_DEFAULT_TLS_SIDECAR_CRUISE_CONTROL_IMAGE";
     public static final String STRIMZI_DEFAULT_KAFKA_EXPORTER_IMAGE = "STRIMZI_DEFAULT_KAFKA_EXPORTER_IMAGE";
     public static final String STRIMZI_DEFAULT_TOPIC_OPERATOR_IMAGE = "STRIMZI_DEFAULT_TOPIC_OPERATOR_IMAGE";
@@ -52,18 +66,25 @@ public class ClusterOperatorConfig {
     public static final String STRIMZI_DEFAULT_KAFKA_INIT_IMAGE = "STRIMZI_DEFAULT_KAFKA_INIT_IMAGE";
     public static final String STRIMZI_DEFAULT_KAFKA_BRIDGE_IMAGE = "STRIMZI_DEFAULT_KAFKA_BRIDGE_IMAGE";
     public static final String STRIMZI_DEFAULT_CRUISE_CONTROL_IMAGE = "STRIMZI_DEFAULT_CRUISE_CONTROL_IMAGE";
+    public static final String STRIMZI_DEFAULT_KANIKO_EXECUTOR_IMAGE = "STRIMZI_DEFAULT_KANIKO_EXECUTOR_IMAGE";
 
     public static final long DEFAULT_FULL_RECONCILIATION_INTERVAL_MS = 120_000;
     public static final long DEFAULT_OPERATION_TIMEOUT_MS = 300_000;
-    public static final boolean DEFAULT_CREATE_CLUSTER_ROLES = false;
+    public static final long DEFAULT_CONNECT_BUILD_TIMEOUT_MS = 300_000;
 
     private final Set<String> namespaces;
     private final long reconciliationIntervalMs;
     private final long operationTimeoutMs;
+    private final long connectBuildTimeoutMs;
     private final boolean createClusterRoles;
     private final KafkaVersion.Lookup versions;
     private final ImagePullPolicy imagePullPolicy;
     private final List<LocalObjectReference> imagePullSecrets;
+    private final String operatorNamespace;
+    private final Labels operatorNamespaceLabels;
+    private final RbacScope rbacScope;
+    private final Labels customResourceSelector;
+    private final FeatureGates featureGates;
 
     /**
      * Constructor
@@ -71,19 +92,44 @@ public class ClusterOperatorConfig {
      * @param namespaces namespace in which the operator will run and create resources
      * @param reconciliationIntervalMs    specify every how many milliseconds the reconciliation runs
      * @param operationTimeoutMs    timeout for internal operations specified in milliseconds
-     * @param createClusterRoles true to create the cluster roles
+     * @param connectBuildTimeoutMs timeout used to wait for a Kafka Connect builds to finish
+     * @param createClusterRoles true to create the ClusterRoles
      * @param versions The configured Kafka versions
      * @param imagePullPolicy Image pull policy configured by the user
      * @param imagePullSecrets Set of secrets for pulling container images from secured repositories
+     * @param operatorNamespace Name of the namespace in which the operator is running
+     * @param operatorNamespaceLabels Labels of the namespace in which the operator is running (used for network policies)
+     * @param rbacScope true to use Roles where possible instead of ClusterRoles
+     * @param customResourceSelector Labels used to filter the custom resources seen by the cluster operator
+     * @param featureGates Configuration string with feature gates settings
      */
-    public ClusterOperatorConfig(Set<String> namespaces, long reconciliationIntervalMs, long operationTimeoutMs, boolean createClusterRoles, KafkaVersion.Lookup versions, ImagePullPolicy imagePullPolicy, List<LocalObjectReference> imagePullSecrets) {
+    public ClusterOperatorConfig(
+            Set<String> namespaces,
+            long reconciliationIntervalMs,
+            long operationTimeoutMs,
+            long connectBuildTimeoutMs,
+            boolean createClusterRoles,
+            KafkaVersion.Lookup versions,
+            ImagePullPolicy imagePullPolicy,
+            List<LocalObjectReference> imagePullSecrets,
+            String operatorNamespace,
+            Labels operatorNamespaceLabels,
+            RbacScope rbacScope,
+            Labels customResourceSelector,
+            String featureGates) {
         this.namespaces = unmodifiableSet(new HashSet<>(namespaces));
         this.reconciliationIntervalMs = reconciliationIntervalMs;
         this.operationTimeoutMs = operationTimeoutMs;
+        this.connectBuildTimeoutMs = connectBuildTimeoutMs;
         this.createClusterRoles = createClusterRoles;
         this.versions = versions;
         this.imagePullPolicy = imagePullPolicy;
         this.imagePullSecrets = imagePullSecrets;
+        this.operatorNamespace = operatorNamespace;
+        this.operatorNamespaceLabels = operatorNamespaceLabels;
+        this.rbacScope = rbacScope;
+        this.customResourceSelector = customResourceSelector;
+        this.featureGates = new FeatureGates(featureGates);
     }
 
     /**
@@ -93,8 +139,21 @@ public class ClusterOperatorConfig {
      * @return  Cluster Operator configuration instance
      */
     public static ClusterOperatorConfig fromMap(Map<String, String> map) {
+        warningsForRemovedEndVars(map);
         KafkaVersion.Lookup lookup = parseKafkaVersions(map.get(STRIMZI_KAFKA_IMAGES), map.get(STRIMZI_KAFKA_CONNECT_IMAGES), map.get(STRIMZI_KAFKA_CONNECT_S2I_IMAGES), map.get(STRIMZI_KAFKA_MIRROR_MAKER_IMAGES), map.get(STRIMZI_KAFKA_MIRROR_MAKER_2_IMAGES));
         return fromMap(map, lookup);
+    }
+
+    /**
+     * Logs warnings for removed / deprecated environment variables
+     *
+     * @param map   map from which loading configuration parameters
+     */
+    private static void warningsForRemovedEndVars(Map<String, String> map) {
+        if (map.containsKey(STRIMZI_DEFAULT_TLS_SIDECAR_KAFKA_IMAGE))    {
+            log.warn("Kafka TLS sidecar container has been removed and the environment variable {} is not used anymore. " +
+                    "You can remove it from the Strimzi Cluster Operator deployment.", STRIMZI_DEFAULT_TLS_SIDECAR_KAFKA_IMAGE);
+        }
     }
 
     /**
@@ -106,14 +165,33 @@ public class ClusterOperatorConfig {
      * @return  Cluster Operator configuration instance
      */
     public static ClusterOperatorConfig fromMap(Map<String, String> map, KafkaVersion.Lookup lookup) {
-        Set<String> namespaces = parseNamespaceList(map.get(ClusterOperatorConfig.STRIMZI_NAMESPACE));
-        long reconciliationInterval = parseReconciliationInerval(map.get(ClusterOperatorConfig.STRIMZI_FULL_RECONCILIATION_INTERVAL_MS));
-        long operationTimeout = parseOperationTimeout(map.get(ClusterOperatorConfig.STRIMZI_OPERATION_TIMEOUT_MS));
-        boolean createClusterRoles = parseCreateClusterRoles(map.get(ClusterOperatorConfig.STRIMZI_CREATE_CLUSTER_ROLES));
-        ImagePullPolicy imagePullPolicy = parseImagePullPolicy(map.get(ClusterOperatorConfig.STRIMZI_IMAGE_PULL_POLICY));
-        List<LocalObjectReference> imagePullSecrets = parseImagePullSecrets(map.get(ClusterOperatorConfig.STRIMZI_IMAGE_PULL_SECRETS));
-        return new ClusterOperatorConfig(namespaces, reconciliationInterval, operationTimeout, createClusterRoles, lookup, imagePullPolicy, imagePullSecrets);
+        Set<String> namespaces = parseNamespaceList(map.get(STRIMZI_NAMESPACE));
+        long reconciliationInterval = parseReconciliationInterval(map.get(STRIMZI_FULL_RECONCILIATION_INTERVAL_MS));
+        long operationTimeout = parseTimeout(map.get(STRIMZI_OPERATION_TIMEOUT_MS), DEFAULT_OPERATION_TIMEOUT_MS);
+        long connectBuildTimeout = parseTimeout(map.get(STRIMZI_CONNECT_BUILD_TIMEOUT_MS), DEFAULT_CONNECT_BUILD_TIMEOUT_MS);
+        boolean createClusterRoles = parseCreateClusterRoles(map.get(STRIMZI_CREATE_CLUSTER_ROLES));
+        ImagePullPolicy imagePullPolicy = parseImagePullPolicy(map.get(STRIMZI_IMAGE_PULL_POLICY));
+        List<LocalObjectReference> imagePullSecrets = parseImagePullSecrets(map.get(STRIMZI_IMAGE_PULL_SECRETS));
+        String operatorNamespace = map.get(STRIMZI_OPERATOR_NAMESPACE);
+        Labels operatorNamespaceLabels = parseLabels(map, STRIMZI_OPERATOR_NAMESPACE_LABELS);
+        RbacScope rbacScope = parseRbacScope(map.get(STRIMZI_RBAC_SCOPE));
+        Labels customResourceSelector = parseLabels(map, STRIMZI_CUSTOM_RESOURCE_SELECTOR);
+        String featureGates = map.getOrDefault(STRIMZI_FEATURE_GATES, "");
 
+        return new ClusterOperatorConfig(
+                namespaces,
+                reconciliationInterval,
+                operationTimeout,
+                connectBuildTimeout,
+                createClusterRoles,
+                lookup,
+                imagePullPolicy,
+                imagePullSecrets,
+                operatorNamespace,
+                operatorNamespaceLabels,
+                rbacScope,
+                customResourceSelector,
+                featureGates);
     }
 
     private static Set<String> parseNamespaceList(String namespacesList)   {
@@ -126,7 +204,7 @@ public class ClusterOperatorConfig {
             } else if (namespacesList.matches("(\\s*[a-z0-9.-]+\\s*,)*\\s*[a-z0-9.-]+\\s*")) {
                 namespaces = new HashSet<>(asList(namespacesList.trim().split("\\s*,+\\s*")));
             } else {
-                throw new InvalidConfigurationException(ClusterOperatorConfig.STRIMZI_NAMESPACE
+                throw new InvalidConfigurationException(STRIMZI_NAMESPACE
                         + " is not a valid list of namespaces nor the 'any namespace' wildcard "
                         + AbstractWatchableResourceOperator.ANY_NAMESPACE);
             }
@@ -135,7 +213,7 @@ public class ClusterOperatorConfig {
         return namespaces;
     }
 
-    private static long parseReconciliationInerval(String reconciliationIntervalEnvVar) {
+    private static long parseReconciliationInterval(String reconciliationIntervalEnvVar) {
         long reconciliationInterval = DEFAULT_FULL_RECONCILIATION_INTERVAL_MS;
 
         if (reconciliationIntervalEnvVar != null) {
@@ -145,14 +223,14 @@ public class ClusterOperatorConfig {
         return reconciliationInterval;
     }
 
-    private static long parseOperationTimeout(String operationTimeoutEnvVar) {
-        long operationTimeout = DEFAULT_OPERATION_TIMEOUT_MS;
+    private static long parseTimeout(String timeoutEnvVar, long defaultTimeout) {
+        long timeout = defaultTimeout;
 
-        if (operationTimeoutEnvVar != null) {
-            operationTimeout = Long.parseLong(operationTimeoutEnvVar);
+        if (timeoutEnvVar != null) {
+            timeout = Long.parseLong(timeoutEnvVar);
         }
 
-        return operationTimeout;
+        return timeout;
     }
 
     private static boolean parseCreateClusterRoles(String createClusterRolesEnvVar) {
@@ -163,6 +241,37 @@ public class ClusterOperatorConfig {
         }
 
         return createClusterRoles;
+    }
+
+    /**
+     * enum to represent the various permission modes the cluster operator can be set to
+     *
+     * CLUSTER is the default and uses ClusterRoles to set permissions
+     * NAMESPACE allows for the use of Roles where possible instead of ClusterRoles
+     */
+    public enum RbacScope {
+        CLUSTER(),
+        NAMESPACE();
+
+        public boolean canUseClusterRoles() {
+            return this.equals(RbacScope.CLUSTER);
+        }
+    }
+
+    private static RbacScope parseRbacScope(String rbacScopeEnvVar) {
+        RbacScope rbacScope = DEFAULT_STRIMZI_RBAC_SCOPE;
+
+        if (rbacScopeEnvVar != null) {
+            try {
+                rbacScope = RbacScope.valueOf(rbacScopeEnvVar);
+            } catch (IllegalArgumentException e) {
+                throw new InvalidConfigurationException(rbacScopeEnvVar
+                        + " is not a valid " + STRIMZI_RBAC_SCOPE + " value. " +
+                        STRIMZI_RBAC_SCOPE + " can have one of the following values: cluster, namespace.");
+            }
+        }
+
+        return rbacScope;
     }
 
     private static ImagePullPolicy parseImagePullPolicy(String imagePullPolicyEnvVar) {
@@ -181,8 +290,8 @@ public class ClusterOperatorConfig {
                     break;
                 default:
                     throw new InvalidConfigurationException(imagePullPolicyEnvVar
-                            + " is not a valid " + ClusterOperatorConfig.STRIMZI_IMAGE_PULL_POLICY + " value. " +
-                            ClusterOperatorConfig.STRIMZI_IMAGE_PULL_POLICY + " can have one of the following values: Always, IfNotPresent, Never.");
+                            + " is not a valid " + STRIMZI_IMAGE_PULL_POLICY + " value. " +
+                            STRIMZI_IMAGE_PULL_POLICY + " can have one of the following values: Always, IfNotPresent, Never.");
             }
         }
 
@@ -233,12 +342,34 @@ public class ClusterOperatorConfig {
             if (imagePullSecretList.matches("(\\s*[a-z0-9.-]+\\s*,)*\\s*[a-z0-9.-]+\\s*")) {
                 imagePullSecrets = Arrays.stream(imagePullSecretList.trim().split("\\s*,+\\s*")).map(secret -> new LocalObjectReferenceBuilder().withName(secret).build()).collect(Collectors.toList());
             } else {
-                throw new InvalidConfigurationException(ClusterOperatorConfig.STRIMZI_IMAGE_PULL_SECRETS
+                throw new InvalidConfigurationException(STRIMZI_IMAGE_PULL_SECRETS
                         + " is not a valid list of secret names");
             }
         }
 
         return imagePullSecrets;
+    }
+
+    /**
+     * Parse labels from String into the Labels format.
+     *
+     * @param vars              Map with configuration variables
+     * @param configurationKey  Key containing the string with labels
+     * @return                  Labels object with the Labels or null if no labels are configured
+     */
+    private static Labels parseLabels(Map<String, String> vars, String configurationKey) {
+        String labelsString = vars.get(configurationKey);
+        Labels labels = null;
+
+        if (labelsString != null) {
+            try {
+                labels = Labels.fromString(labelsString);
+            } catch (Exception e) {
+                throw new InvalidConfigurationException("Failed to parse labels from " + configurationKey, e);
+            }
+        }
+
+        return labels;
     }
 
     /**
@@ -263,6 +394,13 @@ public class ClusterOperatorConfig {
     }
 
     /**
+     * @return  How many milliseconds should we wait for Kafka Connect build to complete
+     */
+    public long getConnectBuildTimeoutMs() {
+        return connectBuildTimeoutMs;
+    }
+
+    /**
      * @return  Indicates whether Cluster Roles should be created
      */
     public boolean isCreateClusterRoles() {
@@ -281,10 +419,42 @@ public class ClusterOperatorConfig {
     }
 
     /**
-     * @return Retuns list of configured ImagePullSecrets. Null if no secrets were configured.
+     * @return The list of configured ImagePullSecrets. Null if no secrets were configured.
      */
     public List<LocalObjectReference> getImagePullSecrets() {
         return imagePullSecrets;
+    }
+
+    /**
+     * @return Returns the name of the namespace where the operator runs or null if not configured
+     */
+    public String getOperatorNamespace() {
+        return operatorNamespace;
+    }
+
+    /**
+     * @return Returns the labels of the namespace where the operator runs or null if not configured
+     */
+    public Labels getOperatorNamespaceLabels() {
+        return operatorNamespaceLabels;
+    }
+
+    /**
+     * @return Permissions mode for the operator, whether to use Roles instead of ClusterRoles wherever possible.
+     */
+    public RbacScope getRbacScope() {
+        return rbacScope;
+    }
+
+    /**
+     * @return Labels used for filtering custom resources
+     */
+    public Labels getCustomResourceSelector() {
+        return customResourceSelector;
+    }
+
+    public FeatureGates featureGates()  {
+        return featureGates;
     }
 
     @Override
@@ -293,10 +463,16 @@ public class ClusterOperatorConfig {
                 "namespaces=" + namespaces +
                 ",reconciliationIntervalMs=" + reconciliationIntervalMs +
                 ",operationTimeoutMs=" + operationTimeoutMs +
+                ",connectBuildTimeoutMs=" + connectBuildTimeoutMs +
                 ",createClusterRoles=" + createClusterRoles +
                 ",versions=" + versions +
                 ",imagePullPolicy=" + imagePullPolicy +
                 ",imagePullSecrets=" + imagePullSecrets +
+                ",operatorNamespace=" + operatorNamespace +
+                ",operatorNamespaceLabels=" + operatorNamespaceLabels +
+                ",rbacScope=" + rbacScope +
+                ",customResourceSelector=" + customResourceSelector +
+                ",featureGates=" + featureGates +
                 ")";
     }
 }

@@ -6,7 +6,11 @@ package io.strimzi.crdgenerator;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import io.fabric8.kubernetes.client.CustomResource;
+import io.strimzi.api.annotations.ApiVersion;
 import io.strimzi.api.annotations.DeprecatedProperty;
+import io.strimzi.api.annotations.DeprecatedType;
+import io.strimzi.api.annotations.VersionRange;
+import io.strimzi.crdgenerator.annotations.Alternation;
 import io.strimzi.crdgenerator.annotations.Crd;
 import io.strimzi.crdgenerator.annotations.Description;
 import io.strimzi.crdgenerator.annotations.DescriptionFile;
@@ -16,6 +20,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.io.StringWriter;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -27,6 +33,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static io.strimzi.crdgenerator.Property.discriminator;
@@ -42,16 +49,19 @@ import static java.util.Collections.singletonList;
 public class DocGenerator {
 
     private static final String NL = System.lineSeparator();
+    private static final Pattern DOT_AT_THE_END = Pattern.compile(".*[.!?]$", Pattern.DOTALL);
 
     private final int headerDepth;
     private final Appendable out;
+    private final ApiVersion crApiVersion;
 
     private Set<Class<?>> documentedTypes = new HashSet<>();
     private HashMap<Class<?>, Set<Class<?>>> usedIn;
     private Linker linker;
     private int numErrors = 0;
 
-    public DocGenerator(int headerDepth, Iterable<Class<? extends CustomResource>> crdClasses, Appendable out, Linker linker) {
+    public DocGenerator(ApiVersion crApiVersion, int headerDepth, Iterable<Class<? extends CustomResource>> crdClasses, Appendable out, Linker linker) {
+        this.crApiVersion = crApiVersion;
         this.out = out;
         this.headerDepth = headerDepth;
         this.linker = linker;
@@ -80,25 +90,39 @@ public class DocGenerator {
     }
 
     private void usedIn(Class<?> cls, Map<Class<?>, Set<Class<?>>> usedIn) {
-        for (Property property : properties(cls).values()) {
+        Set<Property> memorableProperties = new HashSet<>();
+
+        for (Property property : properties(crApiVersion, cls).values()) {
             if (property.isAnnotationPresent(KubeLink.class)) {
                 continue;
             }
+
+            if (property.getType().getType().isAnnotationPresent(Alternation.class)) {
+                memorableProperties.addAll(property.getAlternatives(crApiVersion, VersionRange.all()));
+            } else {
+                memorableProperties.add(property);
+            }
+        }
+
+        for (Property property : memorableProperties) {
             PropertyType propertyType = property.getType();
             Class<?> type = propertyType.isArray() ? propertyType.arrayBase() : propertyType.getType();
             for (Class<?> c : subtypesOrSelf(type)) {
                 if (Schema.isJsonScalarType(c)) {
                     continue;
                 }
-                Set<Class<?>> classes = usedIn.get(c);
-                if (classes == null) {
-                    classes = new HashSet<>(2);
-                    usedIn.put(c, classes);
-                }
+
+                Set<Class<?>> classes = getOrCreateClassesSet(c, usedIn);
+
                 classes.add(cls);
+
                 usedIn(c, usedIn);
             }
         }
+    }
+
+    private Set<Class<?>> getOrCreateClassesSet(Class<?> c, Map<Class<?>, Set<Class<?>>> usedIn)   {
+        return usedIn.computeIfAbsent(c, cls -> new HashSet<>(1));
     }
 
     private List<? extends Class<?>> subtypesOrSelf(Class<?> returnType) {
@@ -119,6 +143,7 @@ public class DocGenerator {
     }
 
     private void appendCommonTypeDoc(Crd crd, Class<?> cls) throws IOException {
+        appendTypeDeprecation(crd, cls);
         appendUsedIn(crd, cls);
         appendDescription(cls);
         appendDiscriminator(crd, cls);
@@ -127,7 +152,7 @@ public class DocGenerator {
         out.append("|====").append(NL);
         out.append("|Property");
         String gunk = "1.2+<.<";
-        final Map<String, Property> properties = properties(cls);
+        final Map<String, Property> properties = properties(crApiVersion, cls);
         int maxLen = computePadding(gunk, properties);
         appendRepeated(' ', maxLen - "Property".length() + 1);
         out.append("|Description");
@@ -139,79 +164,154 @@ public class DocGenerator {
             String propertyName = entry.getKey();
             final Property property = entry.getValue();
             PropertyType propertyType = property.getType();
-            Class<?> propertyClass = propertyType.getType();
             out.append("|").append(propertyName);
             appendRepeated(' ', maxLen - propertyName.length() - gunk.length());
             out.append(' ');
             out.append(gunk);
-            out.append("|");
+            out.append("a|");
 
-            DeprecatedProperty strimziDeprecated = property.getAnnotation(DeprecatedProperty.class);
-            Deprecated langDeprecated = property.getAnnotation(Deprecated.class);
-            if (strimziDeprecated != null || langDeprecated != null) {
-                if (strimziDeprecated == null || langDeprecated == null) {
-                    err(property + " must be annotated with both @" + Deprecated.class.getName()
-                            + " and @" + DeprecatedProperty.class.getName());
-                }
-                if (strimziDeprecated != null) {
-                    out.append(getDeprecation(property, strimziDeprecated));
-                }
-            }
+            // Set warning message for deprecated fields
+            addDeprecationWarning(property);
 
-            Description description2 = property.getAnnotation(Description.class);
-            if (description2 == null) {
-                if (cls.getName().startsWith("io.strimzi")) {
-                    err(property + " is not documented");
-                }
-            } else {
-                out.append(getDescription(description2));
-            }
+            // Set the field description
+            addDescription(cls, property);
+
+            // Set the external link to Kubernetes docs or the link for fields distinguished by `type`
             KubeLink kubeLink = property.getAnnotation(KubeLink.class);
             String externalUrl = linker != null && kubeLink != null ? linker.link(kubeLink) : null;
-            if (externalUrl != null) {
-                out.append(" See external documentation of ").append(externalUrl)
-                        .append("[").append(kubeLink.group()).append("/").append(kubeLink.version()).append(" ").append(kubeLink.kind()).append("].").append(NL).append(NL);
-            } else if (isPolymorphic(propertyClass)) {
-                out.append(" The type depends on the value of the `").append(propertyName).append(".").append(discriminator(propertyClass))
-                        .append("` property within the given object, which must be one of ")
-                        .append(subtypeNames(propertyClass).toString()).append(".");
+            addExternalUrl(property, kubeLink, externalUrl);
+
+            // Get the OneOfType alternatives
+            List<Property> alternatives = property.getAlternatives(crApiVersion, VersionRange.all());
+
+            // Add the types to the `types` array to also generate the docs for the type itself
+            if (alternatives.size() > 0) {
+                addTypesFromAlternatives(alternatives, types);
+            } else {
+                Class<?> documentedType = propertyType.isArray() ? propertyType.arrayBase() : propertyType.getType();
+
+                if (externalUrl == null
+                        && !Schema.isJsonScalarType(documentedType)
+                        && !documentedType.equals(Map.class)
+                        && !documentedType.equals(Object.class)) {
+                    types.add(documentedType);
+                }
             }
 
-            Class<?> documentedType = propertyType.isArray() ? propertyType.arrayBase() : propertyClass;
-            if (externalUrl == null
-                    && !Schema.isJsonScalarType(documentedType)
-                    && !documentedType.equals(Map.class)
-                    && !documentedType.equals(Object.class)) {
-                types.add(documentedType);
-            }
+            // TODO Minimum?, Maximum?, Pattern?
 
-            // TODO Deprecated, Minimum?, Maximum?, Pattern?
-            appendPropertyType(crd, propertyType, externalUrl);
+            // Add the property type description
+            if (alternatives.size() > 0) {
+                appendPropertyTypeWithAlternatives(crd, alternatives);
+            } else {
+                appendPropertyType(crd, out, propertyType, externalUrl);
+            }
         }
         out.append("|====").append(NL).append(NL);
 
         appendNestedTypes(crd, types);
     }
 
+    /**
+     * Sets warning message for deprecated fields
+     *
+     * @param property  The property which will be checked for deprecation
+     *
+     * @throws IOException
+     */
+    private void addDeprecationWarning(Property property) throws IOException {
+        DeprecatedProperty strimziDeprecated = property.getAnnotation(DeprecatedProperty.class);
+        Deprecated langDeprecated = property.getAnnotation(Deprecated.class);
+
+        if (strimziDeprecated != null || langDeprecated != null) {
+            if (strimziDeprecated == null || langDeprecated == null) {
+                err(property + " must be annotated with both @" + Deprecated.class.getName()
+                        + " and @" + DeprecatedProperty.class.getName());
+            }
+            if (strimziDeprecated != null) {
+                out.append(getDeprecation(property, strimziDeprecated));
+            }
+        }
+    }
+
+    /**
+     * Sets the description for given property
+     *
+     * @param cls   The Class (type) which is being documented
+     * @param property  The property for which the description should be added
+     *
+     * @throws IOException
+     */
+    private void addDescription(Class<?> cls, Property property) throws IOException {
+        Description description = property.getAnnotation(Description.class);
+
+        if (description == null) {
+            if (cls.getName().startsWith("io.strimzi")) {
+                err(property + " is not documented");
+            }
+        } else {
+            out.append(getDescription(description));
+        }
+    }
+
+    /**
+     * Sets the external link to Kubernetes docs or the link for fields distinguished by `type`
+     *
+     * @param property  The property for which the description should be added
+     * @param kubeLink  The value of the KubeLink annotation or null if not set
+     * @param externalUrl   The URL to the Kubernetes documentation
+     *
+     * @throws IOException
+     */
+    private void addExternalUrl(Property property, KubeLink kubeLink, String externalUrl) throws IOException {
+        if (externalUrl != null) {
+            out.append(" For more information, see the ").append(externalUrl)
+                    .append("[").append("external documentation for ").append(kubeLink.group()).append("/").append(kubeLink.version()).append(" ").append(kubeLink.kind()).append("].").append(NL).append(NL);
+        } else if (isPolymorphic(property.getType().getType())) {
+            out.append(" The type depends on the value of the `").append(property.getName()).append(".").append(discriminator(property.getType().getType()))
+                    .append("` property within the given object, which must be one of ")
+                    .append(subtypeNames(property.getType().getType()).toString()).append(".");
+        }
+    }
+
+    /**
+     * Adds all the alternative types for having them later documented
+     *
+     * @param alternatives  Alternative properties
+     * @param types     The list of types which will be later documented
+     */
+    private void addTypesFromAlternatives(List<Property> alternatives, LinkedHashSet<Class<?>> types) {
+        for (Property property : alternatives) {
+            Class<?> documentedType = property.getType().isArray() ? property.getType().arrayBase() : property.getType().getType();
+
+            if (!Schema.isJsonScalarType(documentedType)
+                    && !documentedType.equals(Map.class)
+                    && !documentedType.equals(Object.class)) {
+                types.add(documentedType);
+            }
+        }
+    }
+
     private String getDeprecation(Property property, DeprecatedProperty deprecated) {
-        String msg = String.format("*The property `%s` has been deprecated.",
+        String msg = String.format("*The `%s` property has been deprecated",
                 property.getName());
         if (!deprecated.movedToPath().isEmpty()) {
-            msg += " This feature should now be configured at path `" + deprecated.movedToPath() + "`.";
+            msg += ", and should now be configured using `" + deprecated.movedToPath() + "`";
         }
+        if (!deprecated.removalVersion().isEmpty()) {
+            msg += ". The property " + property.getName() + " is removed in API version `" + deprecated.removalVersion() + "`";
+        }
+        msg += ".* ";
         if (!deprecated.description().isEmpty()) {
             msg += deprecated.description() + " ";
         }
-        if (!deprecated.removalVersion().isEmpty()) {
-            msg += " This property is scheduled for removal in version " + deprecated.removalVersion() + ".";
-        }
-        msg += "* ";
+
         return msg;
     }
 
     static String getDescription(Description description) {
         String doc = description.value();
-        if (!doc.trim().matches(".*[.!?]$")) {
+        if (!DOT_AT_THE_END.matcher(doc.trim()).matches())  {
             doc = doc + ".";
         }
         doc = doc.replaceAll("[|]", "\\\\|");
@@ -242,7 +342,8 @@ public class DocGenerator {
         return maxLen;
     }
 
-    private void appendPropertyType(Crd crd, PropertyType propertyType, String externalUrl) throws IOException {
+    @SuppressWarnings("unchecked")
+    private void appendPropertyType(Crd crd, Appendable out, PropertyType propertyType, String externalUrl) throws IOException {
         Class<?> propertyClass = propertyType.isArray() ? propertyType.arrayBase() : propertyType.getType();
         out.append(NL).append("|");
         // Now the type link
@@ -258,7 +359,22 @@ public class DocGenerator {
                 }
             }
             out.append("string (one of " + strings + ")");
+        } else if (propertyType.isArray() && propertyType.arrayBase().isEnum()) {
+            try {
+                Set<String> strings = new HashSet<>();
+                Method valuesMethod = propertyType.arrayBase().getMethod("values");
 
+                for (JsonNode n : Schema.enumCases((Enum[]) valuesMethod.invoke(null))) {
+                    if (n.isTextual()) {
+                        strings.add(n.asText());
+                    } else {
+                        throw new RuntimeException("Enum case is not a string");
+                    }
+                }
+                out.append("string (one or more of " + strings + ")");
+            } catch (ReflectiveOperationException e) {
+                throw new RuntimeException(e);
+            }
         } else {
             typeLink(crd, out, propertyClass);
         }
@@ -270,6 +386,47 @@ public class DocGenerator {
             }
         }
         out.append(NL);
+    }
+
+    private void appendPropertyTypeWithAlternatives(Crd crd, List<Property> alternatives) throws IOException {
+        List<String> alternativeTypes = new ArrayList<>(alternatives.size());
+        for (Property prop : alternatives) {
+            StringWriter writer = new StringWriter();
+            appendPropertyType(crd, writer, prop.getType(), null);
+            String alternativeType = writer.toString();
+            alternativeTypes.add(alternativeType.trim().substring(1));
+        }
+
+        out.append(NL).append("|");
+        out.append(String.join(" or ", alternativeTypes));
+        out.append(NL);
+    }
+
+    private void appendTypeDeprecation(Crd crd, Class<?> cls) throws IOException {
+        DeprecatedType deprecatedType = cls.getAnnotation(DeprecatedType.class);
+        Deprecated langDeprecated = cls.getAnnotation(Deprecated.class);
+
+        if (deprecatedType != null || langDeprecated != null) {
+            if (deprecatedType == null || langDeprecated == null) {
+                err(cls.getName() + " must be annotated with both @" + Deprecated.class.getName()
+                        + " and @" + DeprecatedProperty.class.getName());
+            }
+            if (deprecatedType != null
+                    && deprecatedType.replacedWithType() != null) {
+                Class<?> replacementClss = deprecatedType.replacedWithType();
+
+                out.append("*The type `" + cls.getSimpleName() + "` has been deprecated");
+                if (!deprecatedType.removalVersion().isEmpty()) {
+                    out.append(" and is removed in API version `" + deprecatedType.removalVersion() + "`");
+                }
+                out.append(".*").append(NL);
+
+                out.append("Please use ");
+                typeLink(crd, out, replacementClss);
+                out.append(" instead.").append(NL);
+                out.append(NL);
+            }
+        }
     }
 
     private void appendDescription(Class<?> cls) throws IOException {
@@ -284,7 +441,14 @@ public class DocGenerator {
                 throw new RuntimeException("Class " + cls.getCanonicalName() + " has @DescribeFile annotation, but file " + filename + " does not exist!");
             }
 
+            out.append("xref:type-").append(cls.getSimpleName()).append("-schema-{context}[Full list of `").append(cls.getSimpleName()).append("` schema properties]").append(NL);
+            out.append(NL);
             out.append("include::../" + filename + "[leveloffset=+1]").append(NL);
+            out.append(NL);
+            out.append("[id='type-").append(cls.getSimpleName()).append("-schema-{context}']").append(NL);
+            out.append("==== `").append(cls.getSimpleName()).append("` schema properties").append(NL);
+            out.append(NL);
+
         } else if (description != null) {
             out.append(getDescription(description)).append(NL);
         }
@@ -320,8 +484,8 @@ public class DocGenerator {
                 }
             }).collect(Collectors.joining(", "));
             out.append("The `").append(discriminator)
-                    .append("` property is a discriminator that distinguishes the use of the type `")
-                    .append(cls.getSimpleName()).append("` from ");
+                    .append("` property is a discriminator that distinguishes use of the `")
+                    .append(cls.getSimpleName()).append("` type from ");
             if (subtypeLinks.trim().isEmpty()) {
                 out.append("other subtypes which may be added in the future.");
             } else {
@@ -408,13 +572,15 @@ public class DocGenerator {
             }
         }
 
+        ApiVersion crApiVersion = ApiVersion.V1BETA2;
+
         try (OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(out), StandardCharsets.UTF_8)) {
             writer.append("// This file is auto-generated by ")
                 .append(DocGenerator.class.getName())
                 .append(".").append(NL);
             writer.append("// To change this documentation you need to edit the Java sources.").append(NL);
             writer.append(NL);
-            DocGenerator dg = new DocGenerator(3, classes, writer, linker);
+            DocGenerator dg = new DocGenerator(crApiVersion, 3, classes, writer, linker);
             for (Class<? extends CustomResource> c : classes) {
                 dg.generate(c);
             }

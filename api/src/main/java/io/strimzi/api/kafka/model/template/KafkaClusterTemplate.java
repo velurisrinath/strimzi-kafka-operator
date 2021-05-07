@@ -6,9 +6,11 @@ package io.strimzi.api.kafka.model.template;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import io.strimzi.api.annotations.DeprecatedProperty;
 import io.strimzi.api.kafka.model.Constants;
 import io.strimzi.api.kafka.model.UnknownPropertyPreserving;
 import io.strimzi.crdgenerator.annotations.Description;
+import io.strimzi.crdgenerator.annotations.PresentInVersions;
 import io.sundr.builder.annotations.Buildable;
 import lombok.EqualsAndHashCode;
 
@@ -27,15 +29,15 @@ import java.util.Map;
 @JsonPropertyOrder({
         "statefulset", "pod", "bootstrapService", "brokersService", "externalBootstrapService", "perPodService",
         "externalBootstrapRoute", "perPodRoute", "externalBootstrapIngress", "perPodIngress", "persistentVolumeClaim",
-        "podDisruptionBudget", "kafkaContainer", "tlsSidecarContainer", "initContainer"})
+        "podDisruptionBudget", "kafkaContainer", "tlsSidecarContainer", "initContainer", "clusterCaCert"})
 @EqualsAndHashCode
 public class KafkaClusterTemplate implements Serializable, UnknownPropertyPreserving {
     private static final long serialVersionUID = 1L;
 
     private StatefulSetTemplate statefulset;
     private PodTemplate pod;
-    private ResourceTemplate bootstrapService;
-    private ResourceTemplate brokersService;
+    private InternalServiceTemplate bootstrapService;
+    private InternalServiceTemplate brokersService;
     private ExternalServiceTemplate externalBootstrapService;
     private ExternalServiceTemplate perPodService;
     private ResourceTemplate externalBootstrapRoute;
@@ -43,10 +45,12 @@ public class KafkaClusterTemplate implements Serializable, UnknownPropertyPreser
     private ResourceTemplate externalBootstrapIngress;
     private ResourceTemplate perPodIngress;
     private ResourceTemplate persistentVolumeClaim;
+    private ResourceTemplate clusterCaCert;
     private PodDisruptionBudgetTemplate podDisruptionBudget;
     private ContainerTemplate kafkaContainer;
     private ContainerTemplate tlsSidecarContainer;
     private ContainerTemplate initContainer;
+    private ResourceTemplate clusterRoleBinding;
     private Map<String, Object> additionalProperties = new HashMap<>(0);
 
     @Description("Template for Kafka `StatefulSet`.")
@@ -71,21 +75,21 @@ public class KafkaClusterTemplate implements Serializable, UnknownPropertyPreser
 
     @Description("Template for Kafka bootstrap `Service`.")
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
-    public ResourceTemplate getBootstrapService() {
+    public InternalServiceTemplate getBootstrapService() {
         return bootstrapService;
     }
 
-    public void setBootstrapService(ResourceTemplate bootstrapService) {
+    public void setBootstrapService(InternalServiceTemplate bootstrapService) {
         this.bootstrapService = bootstrapService;
     }
 
     @Description("Template for Kafka broker `Service`.")
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
-    public ResourceTemplate getBrokersService() {
+    public InternalServiceTemplate getBrokersService() {
         return brokersService;
     }
 
-    public void setBrokersService(ResourceTemplate brokersService) {
+    public void setBrokersService(InternalServiceTemplate brokersService) {
         this.brokersService = brokersService;
     }
 
@@ -179,6 +183,9 @@ public class KafkaClusterTemplate implements Serializable, UnknownPropertyPreser
         this.kafkaContainer = kafkaContainer;
     }
 
+    @PresentInVersions("v1alpha1-v1beta1")
+    @DeprecatedProperty(removalVersion = "v1beta2")
+    @Deprecated
     @Description("Template for the Kafka broker TLS sidecar container")
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
     public ContainerTemplate getTlsSidecarContainer() {
@@ -197,6 +204,26 @@ public class KafkaClusterTemplate implements Serializable, UnknownPropertyPreser
 
     public void setInitContainer(ContainerTemplate initContainer) {
         this.initContainer = initContainer;
+    }
+
+    @Description("Template for Secret with Kafka Cluster certificate public key")
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    public ResourceTemplate getClusterCaCert() {
+        return clusterCaCert;
+    }
+
+    public void setClusterCaCert(ResourceTemplate clusterCaCert) {
+        this.clusterCaCert = clusterCaCert;
+    }
+
+    @Description("Template for the Kafka ClusterRoleBinding.")
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    public ResourceTemplate getClusterRoleBinding() {
+        return clusterRoleBinding;
+    }
+
+    public void setClusterRoleBinding(ResourceTemplate clusterRoleBinding) {
+        this.clusterRoleBinding = clusterRoleBinding;
     }
 
     @Override

@@ -7,9 +7,9 @@ package io.strimzi.operator.topic;
 import io.debezium.kafka.KafkaCluster;
 import io.debezium.kafka.ZookeeperServer;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.micrometer.prometheus.PrometheusMeterRegistry;
 import io.strimzi.api.kafka.Crds;
 import io.strimzi.api.kafka.KafkaTopicList;
-import io.strimzi.api.kafka.model.DoneableKafkaTopic;
 import io.strimzi.api.kafka.model.KafkaTopic;
 import io.strimzi.api.kafka.model.KafkaTopicBuilder;
 import io.strimzi.operator.common.model.Labels;
@@ -40,6 +40,7 @@ import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
@@ -62,6 +63,7 @@ public class TopicOperatorMockTest {
     private AdminClient adminClient;
     private TopicConfigsWatcher topicsConfigWatcher;
     private ZkTopicWatcher topicWatcher;
+    private PrometheusMeterRegistry metrics;
     private ZkTopicsWatcher topicsWatcher;
 
     // TODO this is all in common with TOIT, so factor out a common base class
@@ -76,15 +78,19 @@ public class TopicOperatorMockTest {
     }
 
     @AfterAll
-    public static void after() {
-        vertx.close();
+    public static void after() throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(1);
+        vertx.close(closed -> {
+            latch.countDown();
+        });
+        latch.await(30, TimeUnit.SECONDS);
     }
 
     @BeforeEach
     public void createMockKube(VertxTestContext context) throws Exception {
         MockKube mockKube = new MockKube();
         mockKube.withCustomResourceDefinition(Crds.kafkaTopic(),
-                        KafkaTopic.class, KafkaTopicList.class, DoneableKafkaTopic.class);
+                        KafkaTopic.class, KafkaTopicList.class, KafkaTopic::getStatus, KafkaTopic::setStatus);
         kubeClient = mockKube.build();
 
         kafkaCluster = new KafkaCluster();
@@ -103,6 +109,7 @@ public class TopicOperatorMockTest {
         m.put(io.strimzi.operator.topic.Config.ZOOKEEPER_CONNECT.key, "localhost:" + zkPort(kafkaCluster));
         m.put(io.strimzi.operator.topic.Config.ZOOKEEPER_CONNECTION_TIMEOUT_MS.key, "30000");
         m.put(io.strimzi.operator.topic.Config.NAMESPACE.key, "myproject");
+        m.put(io.strimzi.operator.topic.Config.CLIENT_ID.key, "myproject-client-id");
         m.put(io.strimzi.operator.topic.Config.FULL_RECONCILIATION_INTERVAL_MS.key, "10000");
         session = new Session(kubeClient, new io.strimzi.operator.topic.Config(m));
 
@@ -113,6 +120,10 @@ public class TopicOperatorMockTest {
                 topicsConfigWatcher = session.topicConfigsWatcher;
                 topicWatcher = session.topicWatcher;
                 topicsWatcher = session.topicsWatcher;
+                metrics = session.metricsRegistry;
+                metrics.forEachMeter(meter -> {
+                    metrics.remove(meter);
+                });
                 async.flag();
             } else {
                 ar.cause().printStackTrace();
@@ -136,19 +147,34 @@ public class TopicOperatorMockTest {
     }
 
     @AfterEach
-    public void tearDown(VertxTestContext context) {
-        Checkpoint checkpoint = context.checkpoint();
+    public void tearDown(VertxTestContext context) throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(1);
         if (vertx != null && deploymentId != null) {
             vertx.undeploy(deploymentId, undeployResult -> {
+                topicWatcher.stop();
+                topicsWatcher.stop();
+                topicsConfigWatcher.stop();
+                metrics.close();
+                waitFor("Topic watcher stopped",  1_000, 30_000,
+                    () -> !this.topicWatcher.started());
+                waitFor("Topic configs watcher stopped", 1_000, 30_000,
+                    () -> !this.topicsConfigWatcher.started());
+                waitFor("Topic watcher stopped", 1_000, 30_000,
+                    () -> !this.topicsWatcher.started());
+                waitFor("Metrics watcher stopped", 1_000, 30_000,
+                    () -> this.metrics.isClosed());
                 if (adminClient != null) {
                     adminClient.close();
                 }
                 if (kafkaCluster != null) {
                     kafkaCluster.shutdown();
+                    waitFor("stop kafka cluster", 1_000, 30_000, () -> !kafkaCluster.isRunning());
                 }
-                checkpoint.flag();
+                latch.countDown();
             });
         }
+        latch.await(30, TimeUnit.SECONDS);
+        context.completeNow();
     }
 
     private static int zkPort(KafkaCluster cluster) {
@@ -179,14 +205,15 @@ public class TopicOperatorMockTest {
         int retention = 100_000_000;
         KafkaTopic kt = new KafkaTopicBuilder()
                 .withNewMetadata()
-                .withName("my-topic")
-                .addToLabels(Labels.STRIMZI_KIND_LABEL, "topic")
-                .addToLabels(Labels.KUBERNETES_NAME_LABEL, "topic-operator")
+                    .withName("my-topic")
+                    .withNamespace("myproject")
+                    .addToLabels(Labels.STRIMZI_KIND_LABEL, "topic")
+                    .addToLabels(Labels.KUBERNETES_NAME_LABEL, "topic-operator")
                 .endMetadata()
                 .withNewSpec()
-                .withPartitions(1)
-                .withReplicas(1)
-                .addToConfig("retention.bytes", retention)
+                    .withPartitions(1)
+                    .withReplicas(1)
+                    .addToConfig("retention.bytes", retention)
                 .endSpec().build();
 
         testCreatedInKube(context, kt);
@@ -237,7 +264,7 @@ public class TopicOperatorMockTest {
         AtomicReference<Topic> ref = new AtomicReference<>();
         Checkpoint async = context.checkpoint();
         Future<TopicMetadata> kafkaMetadata = session.kafka.topicMetadata(new TopicName(topicName));
-        kafkaMetadata.map(metadata -> TopicSerialization.fromTopicMetadata(metadata)).setHandler(fromKafka -> {
+        kafkaMetadata.map(metadata -> TopicSerialization.fromTopicMetadata(metadata)).onComplete(fromKafka -> {
             if (fromKafka.succeeded()) {
                 ref.set(fromKafka.result());
             } else {
@@ -276,7 +303,7 @@ public class TopicOperatorMockTest {
 
     void reconcile(VertxTestContext context) throws InterruptedException {
         Checkpoint async = context.checkpoint();
-        session.topicOperator.reconcileAllTopics("test").setHandler(ar -> {
+        session.topicOperator.reconcileAllTopics("test").onComplete(ar -> {
             if (!ar.succeeded()) {
                 context.failNow(ar.cause());
             }
@@ -294,14 +321,15 @@ public class TopicOperatorMockTest {
         int retention = 100_000_000;
         KafkaTopic kt = new KafkaTopicBuilder()
                 .withNewMetadata()
-                .withName("my-topic")
-                .addToLabels(Labels.STRIMZI_KIND_LABEL, "topic")
+                    .withName("my-topic")
+                    .withNamespace("myproject")
+                    .addToLabels(Labels.STRIMZI_KIND_LABEL, "topic")
                 .endMetadata()
                 .withNewSpec()
-                .withTopicName("my-topic") // the same as metadata.name
-                .withPartitions(1)
-                .withReplicas(1)
-                .addToConfig("retention.bytes", retention)
+                    .withTopicName("my-topic") // the same as metadata.name
+                    .withPartitions(1)
+                    .withReplicas(1)
+                    .addToConfig("retention.bytes", retention)
                 .endSpec().build();
 
         testCreatedInKube(context, kt);
@@ -312,8 +340,9 @@ public class TopicOperatorMockTest {
         int retention = 100_000_000;
         KafkaTopic kt = new KafkaTopicBuilder()
                 .withNewMetadata()
-                .withName("my-topic")
-                .addToLabels(Labels.STRIMZI_KIND_LABEL, "topic")
+                    .withName("my-topic")
+                    .withNamespace("myproject")
+                    .addToLabels(Labels.STRIMZI_KIND_LABEL, "topic")
                 .endMetadata()
                 .withNewSpec()
                     .withTopicName("DIFFERENT") // different to metadata.name
@@ -322,6 +351,22 @@ public class TopicOperatorMockTest {
                     .addToConfig("retention.bytes", retention)
                 .endSpec().build();
 
+        testCreatedInKube(context, kt);
+    }
+
+    @Test
+    public void testCreatedWithDefaultsInKube(VertxTestContext context) throws InterruptedException {
+        int retention = 100_000_000;
+        KafkaTopic kt = new KafkaTopicBuilder()
+                .withNewMetadata()
+                    .withName("my-topic")
+                    .withNamespace("myproject")
+                    .addToLabels(Labels.STRIMZI_KIND_LABEL, "topic")
+                .endMetadata()
+                .withNewSpec()
+                    .addToConfig("retention.bytes", retention)
+                .endSpec().build();
+    
         testCreatedInKube(context, kt);
     }
 

@@ -5,6 +5,7 @@
 package io.strimzi.test.k8s.cmdClient;
 
 import io.strimzi.test.executor.Exec;
+import io.strimzi.test.k8s.cluster.OpenShift;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -20,6 +21,7 @@ public class Oc extends BaseCmdKubeClient<Oc> {
 
     private static final String OC = "oc";
 
+
     public Oc() { }
 
     private Oc(String futureNamespace) {
@@ -27,28 +29,18 @@ public class Oc extends BaseCmdKubeClient<Oc> {
     }
 
     @Override
-    protected Context adminContext() {
-        String previous = Exec.exec(Oc.OC, "whoami").out().trim();
-        String admin = System.getenv().getOrDefault("TEST_CLUSTER_ADMIN", "developer");
-        LOGGER.trace("Switching from login {} to {}", previous, admin);
-        Exec.exec(Oc.OC, "login", "-u", admin);
-        return new Context() {
-            @Override
-            public void close() {
-                LOGGER.trace("Switching back to login {} from {}", previous, admin);
-                Exec.exec(Oc.OC, "login", "-u", previous);
-            }
-        };
-    }
-
-    @Override
-    public Oc clientWithAdmin() {
-        return new AdminOc();
-    }
-
-    @Override
     public String defaultNamespace() {
-        return "myproject";
+        return OpenShift.DEFAULT_NAMESPACE;
+    }
+
+    @Override
+    public String defaultOlmNamespace() {
+        return OpenShift.OLM_NAMESPACE;
+    }
+
+    @Override
+    public String defaultOlmSourceNamespace() {
+        return OpenShift.OLM_SOURCE_NAMESPACE;
     }
 
     @Override
@@ -83,26 +75,5 @@ public class Oc extends BaseCmdKubeClient<Oc> {
     @Override
     public String cmd() {
         return OC;
-    }
-
-    /**
-     * An {@code Oc} which uses the admin context.
-     */
-    private class AdminOc extends Oc {
-
-        @Override
-        public String namespace() {
-            return Oc.this.namespace();
-        }
-
-        @Override
-        protected Context defaultContext() {
-            return adminContext();
-        }
-
-        @Override
-        public Oc clientWithAdmin() {
-            return this;
-        }
     }
 }

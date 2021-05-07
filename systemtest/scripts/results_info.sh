@@ -4,7 +4,12 @@ RESULTS_PATH=${1}
 TEST_CASE=${2}
 TEST_PROFILE=${3}
 BUILD_ID=${4:-0}
-OCP_VERSION=${5:-3}
+KUBE_VERSION=${5:-1.16.0}
+TEST_ONLY=${6:-''}
+TEST_COUNT_RUNNING_IN_PARALLEL=${7:-''}
+EXCLUDED_GROUPS=${8:-''}
+ENV_VARIABLES=${9:-''}
+ADDITIONAL_INFO=""
 
 JSON_FILE_RESULTS=results.json
 
@@ -27,23 +32,31 @@ TEST_ERRORS_COUNT=$(get_test_count "errors")
 TEST_SKIPPED_COUNT=$(get_test_count "skipped")
 TEST_FAILURES_COUNT=$(get_test_count "failures")
 
-if [[ "${OCP_VERSION}" == "4" ]]; then
-  BUILD_ENV="crc"
-else
-  BUILD_ENV="oc cluster up"
-fi
-
 TEST_ALL_FAILED_COUNT=$((TEST_ERRORS_COUNT + TEST_FAILURES_COUNT))
 
-SUMMARY="**TEST_PROFILE**: ${TEST_PROFILE}\n**TEST_CASE:** ${TEST_CASE}\n**TOTAL:** ${TEST_COUNT}\n**PASS:** $((TEST_COUNT - TEST_ALL_FAILED_COUNT - TEST_SKIPPED_COUNT))\n**FAIL:** ${TEST_ALL_FAILED_COUNT}\n**SKIP:** ${TEST_SKIPPED_COUNT}\n**BUILD_NUMBER:** ${BUILD_ID}\n**BUILD_ENV:** ${BUILD_ENV}\n"
+if [[ -n "${EXCLUDED_GROUPS}" ]]; then
+  ADDITIONAL_INFO="**EXCLUDED_GROUPS:** ${EXCLUDED_GROUPS}\n"
+fi
+
+if [[ -n "${ENV_VARIABLES}" ]]; then
+  ADDITIONAL_INFO+="**ENV_VARIABLES:** ${ENV_VARIABLES}\n"
+fi
+
+SUMMARY="**TEST_PROFILE**: ${TEST_PROFILE}\n${ADDITIONAL_INFO}**TEST_CASE:** ${TEST_CASE}\n**TOTAL:** ${TEST_COUNT}\n**PASS:** $((TEST_COUNT - TEST_ALL_FAILED_COUNT - TEST_SKIPPED_COUNT))\n**FAIL:** ${TEST_ALL_FAILED_COUNT}\n**SKIP:** ${TEST_SKIPPED_COUNT}\n**BUILD_NUMBER:** ${BUILD_ID}\n**KUBE_VERSION:** ${KUBE_VERSION}\n**TEST_COUNT_RUNNING_IN_PARALLEL:** ${TEST_COUNT_RUNNING_IN_PARALLEL}\n"
 
 
-FAILED_TESTS=$(find "${RESULTS_PATH}" -name 'TEST*.xml' -type f -print0 | xargs -0 sed -n "s#\(<testcase.*time=\"[0-9]*,\{0,1\}[0-9]\{1,3\}\..*[^\/]>\)#\1#p" | awk -F '"' '{print "\\n- " $2 " in "  $4}')
+FAILED_TESTS=$(find "${RESULTS_PATH}" -name 'TEST*.xml' -type f -print0 | xargs -0 awk '/<testcase.*>/{ getline x; if (x ~ "<error" || x ~ "<failure") {  gsub(/classname=|name=|\"/, "", $0); if ($3 ~ "time=") { print "\\n- " $2 } else { print "\\n- " $2 " in " $3 } }}')
 echo ${FAILED_TESTS}
 echo "Creating body ..."
 
-TMP_FAILED_TESTS=$(find "${RESULTS_PATH}" -name 'TEST*.xml' -type f -print0 | xargs -0 sed -n "s#\(<testcase.*time=\"[0-9]*,\{0,1\}[0-9]\{1,3\}\..*[^\/]>\)#\1#p" | awk -F '"' '{print "" $4 "#" $2}')
-COMMAND="@strimzi-ci run tests profile=${TEST_PROFILE} testcase="
+if [[ ${TEST_ONLY} == "true" ]]; then
+	TEST_ONLY="test_only"
+else
+	TEST_ONLY=""
+fi
+
+TMP_FAILED_TESTS=$(find "${RESULTS_PATH}" -name 'TEST*.xml' -type f -print0 | xargs -0 sed -n "s#\(<testcase.*time=\"[0-9]*,\{0,1\}[0-9]\{1,3\}\..*[^\/]>\)#\1#p" | awk -F '"' '{ if($2 != "") {print $4 "#" $2} else { print $4 }}')
+COMMAND="@strimzi-ci run tests ${TEST_ONLY} profile=${TEST_PROFILE} testcase="
 
 for line in ${TMP_FAILED_TESTS}
 do
@@ -57,8 +70,14 @@ do
   fi
 done
 
+COMMAND="${COMMAND::-1}"
+
+if [[ -n "${ENV_VARIABLES}" ]]; then
+  COMMAND="${COMMAND} env=${ENV_VARIABLES}"
+fi
+
 echo "Re-run command:"
-echo ${COMMAND::-1}
+echo ${COMMAND}
 
 
 if [ -n "${FAILED_TESTS}" ]
@@ -80,7 +99,7 @@ else
   then
     BODY="{\"body\":\"### :heavy_check_mark: Test Summary :heavy_check_mark:\n${SUMMARY}${FAILED_TEST_BODY}\"}"
   else
-    BODY="{\"body\":\"### :x: Test Summary :x:\n${SUMMARY}${FAILED_TEST_BODY}\n\n**Re-run command**:\n${COMMAND::-1}\"}"
+    BODY="{\"body\":\"### :x: Test Summary :x:\n${SUMMARY}${FAILED_TEST_BODY}\n\n**Re-run command**:\n${COMMAND}\"}"
   fi
 fi
 

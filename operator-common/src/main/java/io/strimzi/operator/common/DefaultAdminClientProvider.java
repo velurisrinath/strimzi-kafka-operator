@@ -42,7 +42,7 @@ public class DefaultAdminClientProvider implements AdminClientProvider {
      * TLS encrypted connection and with TLS client authentication.
      */
     @Override
-    public Admin createAdminClient(String hostname, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName) {
+    public Admin createAdminClient(String bootstrapHostnames, Secret clusterCaCertSecret, Secret keyCertSecret, String keyCertName) {
         Admin ac;
         String trustStorePassword = null;
         File truststoreFile = null;
@@ -64,7 +64,7 @@ public class DefaultAdminClientProvider implements AdminClientProvider {
 
             try {
                 Properties p = new Properties();
-                p.setProperty(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, hostname);
+                p.setProperty(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapHostnames);
 
                 // configuring TLS encryption if requested
                 if (truststoreFile != null && trustStorePassword != null) {
@@ -83,6 +83,9 @@ public class DefaultAdminClientProvider implements AdminClientProvider {
                 }
 
                 p.setProperty(AdminClientConfig.METADATA_MAX_AGE_CONFIG, "30000");
+                p.setProperty(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "10000");
+                p.setProperty(AdminClientConfig.RETRIES_CONFIG, "3");
+                p.setProperty(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "40000");
 
                 ac = Admin.create(p);
             } finally {

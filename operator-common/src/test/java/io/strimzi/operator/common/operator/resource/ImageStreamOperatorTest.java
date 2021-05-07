@@ -6,7 +6,6 @@ package io.strimzi.operator.common.operator.resource;
 
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.Resource;
-import io.fabric8.openshift.api.model.DoneableImageStream;
 import io.fabric8.openshift.api.model.ImageStream;
 import io.fabric8.openshift.api.model.ImageStreamBuilder;
 import io.fabric8.openshift.api.model.ImageStreamList;
@@ -15,7 +14,7 @@ import io.vertx.core.Vertx;
 
 import static org.mockito.Mockito.when;
 
-public class ImageStreamOperatorTest extends AbstractResourceOperatorTest<OpenShiftClient, ImageStream, ImageStreamList, DoneableImageStream, Resource<ImageStream, DoneableImageStream>> {
+public class ImageStreamOperatorTest extends AbstractResourceOperatorTest<OpenShiftClient, ImageStream, ImageStreamList, Resource<ImageStream>> {
 
     @Override
     protected Class<OpenShiftClient> clientType() {
@@ -29,7 +28,23 @@ public class ImageStreamOperatorTest extends AbstractResourceOperatorTest<OpenSh
 
     @Override
     protected ImageStream resource() {
-        return new ImageStreamBuilder().withNewMetadata().withNamespace(NAMESPACE).withName(RESOURCE_NAME).endMetadata().build();
+        return new ImageStreamBuilder()
+                .withNewMetadata()
+                    .withNamespace(NAMESPACE)
+                    .withName(RESOURCE_NAME)
+                .endMetadata()
+                .build();
+    }
+
+    @Override
+    protected ImageStream modifiedResource() {
+        return new ImageStreamBuilder()
+                .withNewMetadata()
+                    .withNamespace(NAMESPACE)
+                    .withName(RESOURCE_NAME)
+                    .addToLabels("foo", "bar")
+                .endMetadata()
+                .build();
     }
 
     @Override
@@ -38,7 +53,7 @@ public class ImageStreamOperatorTest extends AbstractResourceOperatorTest<OpenSh
     }
 
     @Override
-    protected AbstractResourceOperator<OpenShiftClient, ImageStream, ImageStreamList, DoneableImageStream, Resource<ImageStream, DoneableImageStream>> createResourceOperations(Vertx vertx, OpenShiftClient mockClient) {
+    protected AbstractResourceOperator<OpenShiftClient, ImageStream, ImageStreamList, Resource<ImageStream>> createResourceOperations(Vertx vertx, OpenShiftClient mockClient) {
         return new ImageStreamOperator(vertx, mockClient);
     }
 

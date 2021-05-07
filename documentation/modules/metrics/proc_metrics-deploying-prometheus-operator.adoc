@@ -4,48 +4,36 @@
 
 [id='proc-metrics-deploying-prometheus-operator-{context}']
 
-= Deploying the Prometheus Operator
+= Deploying the CoreOS Prometheus Operator
 
-To deploy the Prometheus Operator to your Kafka cluster, apply the YAML resource files from the https://github.com/coreos/prometheus-operator/tree/master/example/rbac/prometheus-operator[Prometheus CoreOS repository].
+To deploy the Prometheus Operator to your Kafka cluster, apply the YAML bundle resources file from the https://github.com/coreos/prometheus-operator[Prometheus CoreOS repository].
 
 .Procedure
 
-. Download the resource files from the repository and replace the example `namespace` with your own:
+. Download the `bundle.yaml` resources file from the repository.
 +
 On Linux, use:
 +
-[source,shell,subs=+quotes]
-curl -s https://raw.githubusercontent.com/coreos/prometheus-operator/master/example/rbac/prometheus-operator/prometheus-operator-deployment.yaml | sed -e 's/namespace: .\*/namespace: _my-namespace_/' > prometheus-operator-deployment.yaml
-+
-[source,shell,subs=+quotes]
-curl -s https://raw.githubusercontent.com/coreos/prometheus-operator/master/example/rbac/prometheus-operator/prometheus-operator-cluster-role.yaml > prometheus-operator-cluster-role.yaml
-+
-[source,shell,subs=+quotes]
-curl -s https://raw.githubusercontent.com/coreos/prometheus-operator/master/example/rbac/prometheus-operator/prometheus-operator-cluster-role-binding.yaml | sed -e 's/namespace: .*/namespace: _my-namespace_/' > prometheus-operator-cluster-role-binding.yaml
-+
-[source,shell,subs=+quotes]
-curl -s https://raw.githubusercontent.com/coreos/prometheus-operator/master/example/rbac/prometheus-operator/prometheus-operator-service-account.yaml | sed -e 's/namespace: .*/namespace: _my-namespace_/' > prometheus-operator-service-account.yaml
+[source,shell,subs="+quotes,attributes+"]
+curl -s https://raw.githubusercontent.com/coreos/prometheus-operator/master/bundle.yaml | sed -e '/[[:space:]]\*namespace: [a-zA-Z0-9-]*$/s/namespace:[[:space:]]\*[a-zA-Z0-9-]*$/namespace: _my-namespace_/' > prometheus-operator-deployment.yaml
 +
 On MacOS, use:
 +
-[source,shell,subs=+quotes]
-curl -s https://raw.githubusercontent.com/coreos/prometheus-operator/master/example/rbac/prometheus-operator/prometheus-operator-deployment.yaml | sed -e '' 's/namespace: .\*/namespace: _my-namespace_/' > prometheus-operator-deployment.yaml
+[source,shell,subs="+quotes,attributes+"]
+curl -s https://raw.githubusercontent.com/coreos/prometheus-operator/master/bundle.yaml | sed -e '' '/[[:space:]]\*namespace: [a-zA-Z0-9-]*$/s/namespace:[[:space:]]\*[a-zA-Z0-9-]*$/namespace: _my-namespace_/' > prometheus-operator-deployment.yaml
 +
-[source,shell,subs=+quotes]
-curl -s https://raw.githubusercontent.com/coreos/prometheus-operator/master/example/rbac/prometheus-operator/prometheus-operator-cluster-role.yaml > prometheus-operator-cluster-role.yaml
+** Replace the example `namespace` with your own.
 +
-[source,shell,subs=+quotes]
-curl -s https://raw.githubusercontent.com/coreos/prometheus-operator/master/example/rbac/prometheus-operator/prometheus-operator-cluster-role-binding.yaml | sed -e '' 's/namespace: .*/namespace: _my-namespace_/' > prometheus-operator-cluster-role-binding.yaml
+ifdef::Downloading[]
+** Use the latest `master` release as shown, or choose a release that is compatible with your version of Kubernetes (see the https://github.com/coreos/kube-prometheus#kubernetes-compatibility-matrix[Kubernetes compatibility matrix]). 
+The `master` release of the Prometheus Operator works with Kubernetes 1.18+.
+endif::Downloading[]
 +
-[source,shell,subs=+quotes]
-curl -s https://raw.githubusercontent.com/coreos/prometheus-operator/master/example/rbac/prometheus-operator/prometheus-operator-service-account.yaml | sed -e '' 's/namespace: .*/namespace: _my-namespace_/' > prometheus-operator-service-account.yaml
-+
-NOTE: If it is not required, you can manually remove the `spec.template.spec.securityContext` property from the `prometheus-operator-deployment.yaml` file.
+NOTE: If using OpenShift, specify a release of the link:https://github.com/openshift/prometheus-operator[OpenShift fork^] of the Prometheus Operator repository.
+
+. (Optional) If it is not required, you can manually remove the `spec.template.spec.securityContext` property from the `prometheus-operator-deployment.yaml` file.
 
 . Deploy the Prometheus Operator:
 +
 [source,shell,subs="+attributes"]
 kubectl apply -f prometheus-operator-deployment.yaml
-kubectl apply -f prometheus-operator-cluster-role.yaml
-kubectl apply -f prometheus-operator-cluster-role-binding.yaml
-kubectl apply -f prometheus-operator-service-account.yaml

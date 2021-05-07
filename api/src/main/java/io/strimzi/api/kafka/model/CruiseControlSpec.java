@@ -7,9 +7,12 @@ package io.strimzi.api.kafka.model;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import io.fabric8.kubernetes.api.model.ResourceRequirements;
+import io.strimzi.api.annotations.DeprecatedProperty;
 import io.strimzi.api.kafka.model.balancing.BrokerCapacity;
 import io.strimzi.api.kafka.model.template.CruiseControlTemplate;
 import io.strimzi.crdgenerator.annotations.Description;
+import io.strimzi.crdgenerator.annotations.KubeLink;
+import io.strimzi.crdgenerator.annotations.PresentInVersions;
 import io.sundr.builder.annotations.Buildable;
 import java.io.Serializable;
 import java.util.HashMap;
@@ -19,24 +22,26 @@ import lombok.EqualsAndHashCode;
 @Buildable(
         editableEnabled = false,
         generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder"
+        builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonPropertyOrder({
-        "image", "config",
+        "image", "tlsSidecar", "resources",
         "livenessProbe", "readinessProbe",
-        "jvmOptions", "resources",
-        "logging", "tlsSidecar", "template", "brokerCapacity"})
+        "jvmOptions", "logging",
+        "template", "brokerCapacity",
+        "config", "metrics", "metricsConfig"})
 @EqualsAndHashCode
-public class CruiseControlSpec implements UnknownPropertyPreserving, Serializable {
+public class CruiseControlSpec implements HasConfigurableMetrics, UnknownPropertyPreserving, Serializable {
     private static final long serialVersionUID = 1L;
 
     // For the full configuration list refer to https://github.com/linkedin/cruise-control/wiki/Configurations
     public static final String FORBIDDEN_PREFIXES = "bootstrap.servers, client.id, zookeeper., network., security., failed.brokers.zk.path,"
         + "webserver.http., webserver.api.urlprefix, webserver.session.path, webserver.accesslog., two.step., request.reason.required,"
         + "metric.reporter.sampler.bootstrap.servers, metric.reporter.topic, partition.metric.sample.store.topic, broker.metric.sample.store.topic,"
-        + "capacity.config.file, self.healing., ssl.";
-    public static final String FORBIDDEN_PREFIX_EXCEPTIONS = "ssl.cipher.suites, ssl.protocol, ssl.enabled.protocols";
+        + "capacity.config.file, self.healing., anomaly.detection., ssl.";
+    public static final String FORBIDDEN_PREFIX_EXCEPTIONS = "ssl.cipher.suites, ssl.protocol, ssl.enabled.protocols, webserver.http.cors.enabled," +
+            "webserver.http.cors.origin, webserver.http.cors.exposeheaders";
 
     private String image;
     private TlsSidecar tlsSidecar;
@@ -48,6 +53,8 @@ public class CruiseControlSpec implements UnknownPropertyPreserving, Serializabl
     private CruiseControlTemplate template;
     private BrokerCapacity brokerCapacity;
     private Map<String, Object> config = new HashMap<>(0);
+    private Map<String, Object> metrics;
+    private MetricsConfig metricsConfig;
     private Map<String, Object> additionalProperties = new HashMap<>(0);
 
     @Description("The docker image for the pods.")
@@ -82,7 +89,8 @@ public class CruiseControlSpec implements UnknownPropertyPreserving, Serializabl
 
     @Description("The Cruise Control configuration. For a full list of configuration options refer to" +
             " https://github.com/linkedin/cruise-control/wiki/Configurations. Note that properties " +
-            "with the following prefixes cannot be set: " + FORBIDDEN_PREFIXES)
+            "with the following prefixes cannot be set: " + FORBIDDEN_PREFIXES +
+            " (with the exception of: " + FORBIDDEN_PREFIX_EXCEPTIONS + ").")
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
     public Map<String, Object> getConfig() {
         return config;
@@ -92,7 +100,35 @@ public class CruiseControlSpec implements UnknownPropertyPreserving, Serializabl
         this.config = config;
     }
 
-    @Description("Logging configuration (log4j1) for Cruise Control.")
+    @DeprecatedProperty(movedToPath = "spec.cruiseControl.metricsConfig", removalVersion = "v1beta2")
+    @PresentInVersions("v1alpha1-v1beta1")
+    @Deprecated
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    @Description("The Prometheus JMX Exporter configuration. " +
+            "See https://github.com/prometheus/jmx_exporter for details of the structure of this configuration.")
+    @Override
+    public Map<String, Object> getMetrics() {
+        return metrics;
+    }
+
+    @Override
+    public void setMetrics(Map<String, Object> metrics) {
+        this.metrics = metrics;
+    }
+
+    @Description("Metrics configuration.")
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    @Override
+    public MetricsConfig getMetricsConfig() {
+        return metricsConfig;
+    }
+
+    @Override
+    public void setMetricsConfig(MetricsConfig metricsConfig) {
+        this.metricsConfig = metricsConfig;
+    }
+
+    @Description("Logging configuration (Log4j 2) for Cruise Control.")
     @JsonInclude(value = JsonInclude.Include.NON_NULL)
     public Logging getLogging() {
         return logging;
@@ -113,6 +149,7 @@ public class CruiseControlSpec implements UnknownPropertyPreserving, Serializabl
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
+    @KubeLink(group = "core", version = "v1", kind = "resourcerequirements")
     @Description("CPU and memory resources to reserve for the Cruise Control container")
     public ResourceRequirements getResources() {
         return resources;

@@ -4,26 +4,39 @@
  */
 package io.strimzi.systemtest.utils;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import com.jayway.jsonpath.JsonPath;
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.strimzi.api.kafka.model.ContainerEnvVar;
 import io.strimzi.api.kafka.model.ContainerEnvVarBuilder;
+import io.strimzi.systemtest.Constants;
 import io.strimzi.systemtest.Environment;
+import io.strimzi.test.TestUtils;
+import io.strimzi.test.k8s.KubeClusterResource;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.junit.jupiter.api.extension.ExtensionContext;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static io.strimzi.systemtest.Constants.PARALLEL_NAMESPACE;
+import static io.strimzi.systemtest.resources.ResourceManager.cmdKubeClient;
 import static io.strimzi.test.k8s.KubeClusterResource.kubeClient;
 
 public class StUtils {
@@ -36,6 +49,9 @@ public class StUtils {
     private static final Pattern IMAGE_PATTERN = Pattern.compile("^(?<org>[^/]*)/(?<image>[^:]*):(?<tag>.*)$");
 
     private static final Pattern VERSION_IMAGE_PATTERN = Pattern.compile("(?<version>[0-9.]+)=(?<image>[^\\s]*)");
+
+    private static final Pattern BETWEEN_JSON_OBJECTS_PATTERN = Pattern.compile("}[\\n\\r]+\\{");
+    private static final Pattern ALL_BEFORE_JSON_PATTERN = Pattern.compile("(.*\\s)}, \\{", Pattern.DOTALL);
 
     private StUtils() { }
 
@@ -109,9 +125,13 @@ public class StUtils {
         return testEnvs;
     }
 
-    public static String checkEnvVarInPod(String podName, String envVarName) {
-        return kubeClient().getPod(podName).getSpec().getContainers().get(0).getEnv()
+    public static String checkEnvVarInPod(String namespaceName, String podName, String envVarName) {
+        return kubeClient(namespaceName).getPod(podName).getSpec().getContainers().get(0).getEnv()
                 .stream().filter(envVar -> envVar.getName().equals(envVarName)).findFirst().get().getValue();
+    }
+
+    public static String checkEnvVarInPod(String podName, String envVarName) {
+        return checkEnvVarInPod(kubeClient().getNamespace(), podName, envVarName);
     }
 
     /**
@@ -178,10 +198,10 @@ public class StUtils {
         return validLines;
     }
 
-    public static JsonArray expectedServiceDiscoveryInfo(int port, String protocol, String auth) {
+    public static JsonArray expectedServiceDiscoveryInfo(int port, String protocol, String auth, boolean tls) {
         JsonObject jsonObject = new JsonObject();
         jsonObject.put("port", port);
-        jsonObject.put("tls", port == 9093);
+        jsonObject.put(Constants.TLS_LISTENER_DEFAULT_NAME, tls);
         jsonObject.put("protocol", protocol);
         jsonObject.put("auth", auth);
 
@@ -191,28 +211,166 @@ public class StUtils {
         return jsonArray;
     }
 
-    public static JsonArray expectedServiceDiscoveryInfo(String plainAuth, String tlsAuth) {
+    /**
+     * Build jsonArray with data about service discovery based on pass configuration
+     * @param plainEcryption plain listener encryption
+     * @param tlsEncryption tls listener encryption
+     * @param plainTlsAuth plain listener authentication
+     * @param tlsTlsAuth tls listener authentication
+     * @return builded jsonArray
+     */
+    public static JsonArray expectedServiceDiscoveryInfo(String plainEcryption, String tlsEncryption, boolean plainTlsAuth, boolean tlsTlsAuth) {
         JsonArray jsonArray = new JsonArray();
-        jsonArray.add(expectedServiceDiscoveryInfo(9092, "kafka", plainAuth).getValue(0));
-        jsonArray.add(expectedServiceDiscoveryInfo(9093, "kafka", tlsAuth).getValue(0));
+        jsonArray.add(expectedServiceDiscoveryInfo(9092, "kafka", plainEcryption, plainTlsAuth).getValue(0));
+        jsonArray.add(expectedServiceDiscoveryInfo(9093, "kafka", tlsEncryption, tlsTlsAuth).getValue(0));
         return jsonArray;
     }
 
-    public static boolean checkLogForJSONFormat(Map<String, String> pods, String containerName) {
-        boolean isJSON = false;
+    /**
+     * Method for checking if JSON format logging is set for the {@code pods}
+     * Steps:
+     * 1. get log from pod
+     * 2. find every occurrence of `}\n{` which will be replaced with `}, {` - by {@link #BETWEEN_JSON_OBJECTS_PATTERN}
+     * 3. replace everything from beginning to the first proper JSON object with `{`- by {@link #ALL_BEFORE_JSON_PATTERN}
+     * 4. also add `[` to beginning and `]` to the end of String to create proper JsonArray
+     * 5. try to parse the JsonArray
+     * @param namespaceName Namespace name
+     * @param pods snapshot of pods to be checked
+     * @param containerName name of container from which to take the log
+     */
+    public static void checkLogForJSONFormat(String namespaceName, Map<String, String> pods, String containerName) {
+        //this is only for decrease the number of records - kafka have record/line, operators record/11lines
+        String tail = "--tail=" + (containerName.contains("operator") ? "100" : "10");
 
-        for (String podName : pods.keySet()) {
-            String logs = kubeClient().logs(podName, containerName).replaceFirst("([^{]+)", "");
-            try {
-                new JsonObject(logs);
-                LOGGER.info("JSON format logging successfully set for {} - {}", podName, containerName);
-                isJSON = true;
-            } catch (Exception e) {
-                LOGGER.info("Failed to set JSON format logging for {} - {}", podName, containerName);
-                isJSON = false;
-                break;
+        TestUtils.waitFor("for JSON log in " + pods, Constants.GLOBAL_POLL_INTERVAL, Constants.GLOBAL_TIMEOUT, () -> {
+            boolean isJSON = false;
+            for (String podName : pods.keySet()) {
+                String log = cmdKubeClient().namespace(namespaceName).execInCurrentNamespace(false, "logs", podName, "-c", containerName, tail).out();
+
+                // remove incomplete JSON from the end
+                int lastBracket = log.lastIndexOf("}");
+                int firstBracket = log.indexOf("{");
+                if (log.length() >= lastBracket) {
+                    log = log.substring(Math.max(0, firstBracket), lastBracket + 1);
+                }
+
+                Matcher matcher = BETWEEN_JSON_OBJECTS_PATTERN.matcher(log);
+
+                log = matcher.replaceAll("}, \\{");
+                matcher = ALL_BEFORE_JSON_PATTERN.matcher(log);
+                log = "[" + matcher.replaceFirst("{") + "]";
+
+                try {
+                    new JsonArray(log);
+                    LOGGER.info("JSON format logging successfully set for {} - {} in namespace {}", podName, containerName, namespaceName);
+                    isJSON = true;
+                } catch (Exception e) {
+                    LOGGER.info(log);
+                    LOGGER.info("Failed to set JSON format logging for {} - {} in namespace {}", podName, containerName, namespaceName, e);
+                    isJSON = false;
+                    break;
+                }
             }
+            return isJSON;
+        });
+    }
+
+    public static void checkLogForJSONFormat(Map<String, String> pods, String containerName) {
+        checkLogForJSONFormat(kubeClient().getNamespace(), pods, containerName);
+    }
+
+    /**
+     * Method for check if test is allowed on current Kubernetes version
+     * @param maxKubernetesVersion kubernetes version which test needs
+     * @return true if test is allowed, false if not
+     */
+    public static boolean isAllowedOnCurrentK8sVersion(String maxKubernetesVersion) {
+        if (maxKubernetesVersion.equals("latest")) {
+            return true;
         }
-        return isJSON;
+        return Double.parseDouble(kubeClient().clusterKubernetesVersion()) < Double.parseDouble(maxKubernetesVersion);
+    }
+
+    /**
+     * Method which returns log from last {@code timeSince}
+     * @param podName name of pod to take a log from
+     * @param containerName name of container
+     * @param timeSince time from which the log should be taken - 3s, 5m, 2h -- back
+     * @return log from the pod
+     */
+    public static String getLogFromPodByTime(String podName, String containerName, String timeSince) {
+        return getLogFromPodByTime(kubeClient().getNamespace(), podName, containerName, timeSince);
+    }
+
+    /**
+     * Method which returns log from last {@code timeSince}
+     * @param namespaceName name of the namespace
+     * @param podName name of pod to take a log from
+     * @param containerName name of container
+     * @param timeSince time from which the log should be taken - 3s, 5m, 2h -- back
+     * @return log from the pod
+     */
+    public static String getLogFromPodByTime(String namespaceName, String podName, String containerName, String timeSince) {
+        return cmdKubeClient().namespace(namespaceName).execInCurrentNamespace("logs", podName, "-c", containerName, "--since=" + timeSince).out();
+    }
+
+    /**
+     * Change Deployment configuration before applying it. We set different namespace, log level and image pull policy.
+     * It's mostly used for use cases where we use direct kubectl command instead of fabric8 calls to api.
+     * @param deploymentFile loaded Strimzi deployment file
+     * @param namespace namespace where Strimzi should be installed
+     * @return deployment file content as String
+     */
+    public static String changeDeploymentNamespace(File deploymentFile, String namespace) {
+        YAMLMapper mapper = new YAMLMapper();
+        try {
+            JsonNode node = mapper.readTree(deploymentFile);
+            // Change the docker org of the images in the 060-deployment.yaml
+            ObjectNode containerNode = (ObjectNode) node.at("/spec/template/spec/containers").get(0);
+            for (JsonNode envVar : containerNode.get("env")) {
+                String varName = envVar.get("name").textValue();
+                if (varName.matches("STRIMZI_NAMESPACE")) {
+                    // Replace all the default images with ones from the $DOCKER_ORG org and with the $DOCKER_TAG tag
+                    ((ObjectNode) envVar).remove("valueFrom");
+                    ((ObjectNode) envVar).put("value", namespace);
+                }
+                if (varName.matches("STRIMZI_LOG_LEVEL")) {
+                    ((ObjectNode) envVar).put("value", Environment.STRIMZI_LOG_LEVEL);
+                }
+            }
+            // Change image pull policy
+            ObjectMapper objectMapper = new ObjectMapper();
+            ObjectNode imagePulPolicyEnvVar = objectMapper.createObjectNode();
+            imagePulPolicyEnvVar.put("name", "STRIMZI_IMAGE_PULL_POLICY");
+            imagePulPolicyEnvVar.put("value", Environment.COMPONENTS_IMAGE_PULL_POLICY);
+            ((ArrayNode) containerNode.get("env")).add(imagePulPolicyEnvVar);
+            return mapper.writeValueAsString(node);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static String getLineFromPod(String podName, String filePath, String grepString) {
+        return getLineFromPodContainer(kubeClient().getNamespace(), podName, null, filePath, grepString);
+    }
+
+    public static String getLineFromPodContainer(String namespaceName, String podName, String containerName, String filePath, String grepString) {
+        if (containerName == null) {
+            return KubeClusterResource.cmdKubeClient(namespaceName).execInPod(podName, "grep", "-i", grepString, filePath).out().trim();
+        } else {
+            return KubeClusterResource.cmdKubeClient(namespaceName).execInPodContainer(podName, containerName, "grep", "-i", grepString, filePath).out().trim();
+        }
+    }
+
+    /**
+     * Checking if test case contains annotation ParallelNamespaceTest
+     * @param extensionContext context of the test case
+     * @return true if test case contains annotation ParallelNamespaceTest, otherwise false
+     */
+    public static boolean isParallelNamespaceTest(ExtensionContext extensionContext) {
+        return Arrays.stream(extensionContext.getElement().get().getAnnotations()).filter(
+            annotation -> annotation.annotationType().getName()
+                .toLowerCase(Locale.ENGLISH)
+                .contains(PARALLEL_NAMESPACE)).count() == 1;
     }
 }

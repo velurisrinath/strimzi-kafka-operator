@@ -100,6 +100,20 @@ public class LabelsTest {
     }
 
     @Test
+    public void testToLabelSelectorString()   {
+        Map sourceMap = new HashMap<String, String>(4);
+        sourceMap.put(Labels.STRIMZI_CLUSTER_LABEL, "my-cluster");
+        sourceMap.put(Labels.STRIMZI_KIND_LABEL, "Kafka");
+        sourceMap.put(Labels.STRIMZI_NAME_LABEL, "my-cluster-kafka");
+        sourceMap.put("key1", "value1");
+        Labels labels = Labels.fromMap(sourceMap);
+
+        String expected = "key1=value1," + Labels.STRIMZI_CLUSTER_LABEL + "=my-cluster," + Labels.STRIMZI_KIND_LABEL + "=Kafka," + Labels.STRIMZI_NAME_LABEL + "=my-cluster-kafka";
+
+        assertThat(labels.toSelectorString(), is(expected));
+    }
+
+    @Test
     public void testWithUserLabels()   {
         Labels start = Labels.forStrimziCluster("my-cluster");
 
@@ -118,36 +132,6 @@ public class LabelsTest {
 
         Labels nonNullLabels = start.withAdditionalLabels(userLabels);
         assertThat(nonNullLabels.toMap(), is(expected));
-    }
-
-    @Test
-    public void testWithUserLabelsFiltersKubernetesDomainLabelsWithExceptionPartOfLabel()   {
-        Labels start = Labels.forStrimziCluster("my-cluster");
-
-        Map userLabels = new HashMap<String, String>(5);
-        userLabels.put(Labels.KUBERNETES_NAME_LABEL, "kafka");
-        userLabels.put("key1", "value1");
-        userLabels.put(Labels.KUBERNETES_INSTANCE_LABEL, "my-cluster");
-        userLabels.put(Labels.KUBERNETES_PART_OF_LABEL, "strimzi-my-cluster");
-        userLabels.put("key2", "value2");
-        userLabels.put(Labels.KUBERNETES_MANAGED_BY_LABEL, "my-operator");
-        String validLabelContainingKubernetesDomainSubstring = "foo/" + Labels.KUBERNETES_DOMAIN;
-        userLabels.put(validLabelContainingKubernetesDomainSubstring, "bar");
-
-
-        // user labels should appear as if Kubernetes Domain labels are not present
-        Map expectedUserLabels = new HashMap<String, String>(2);
-        expectedUserLabels.put("key1", "value1");
-        expectedUserLabels.put("key2", "value2");
-        expectedUserLabels.put(validLabelContainingKubernetesDomainSubstring, "bar");
-        expectedUserLabels.put(Labels.KUBERNETES_PART_OF_LABEL, "strimzi-my-cluster");
-
-        Map<String, String> expected = new HashMap<String, String>();
-        expected.putAll(start.toMap());
-        expected.putAll(expectedUserLabels);
-
-        Labels labels = start.withAdditionalLabels(userLabels);
-        assertThat(labels.toMap(), is(expected));
     }
 
     @Test

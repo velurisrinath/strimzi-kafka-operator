@@ -12,13 +12,13 @@ function get_default_kafka_version {
     default_kafka_version="null"
     while [ $finished -lt 1 ] 
     do
-        version="$(yq read $VERSIONS_FILE "[${counter}].version")"
+        version="$(yq eval ".[${counter}].version" $VERSIONS_FILE )"
 
         if [ "$version" = "null" ]
         then
             finished=1
         else
-            if [ "$(yq read $VERSIONS_FILE "[${counter}].default")" = "true" ]
+            if [ "$(yq eval ".[${counter}].default" $VERSIONS_FILE)" = "true" ]
             then
                 if [ "$default_kafka_version" = "null" ]
                 then
@@ -42,35 +42,35 @@ function get_default_kafka_version {
 }
 
 function get_kafka_versions {
-    eval versions="($(yq read $VERSIONS_FILE '*.version'))"
+    eval versions="($(yq eval '.[] | select(.supported == true) | .version' $VERSIONS_FILE))"
 }
 
 function get_kafka_urls {
-    eval binary_urls="($(yq read $VERSIONS_FILE '*.url'))"
+    eval binary_urls="($(yq eval '.[] | select(.supported == true) | .url' $VERSIONS_FILE))"
 }
 
 function get_zookeeper_versions {
-    eval zk_versions="($(yq read $VERSIONS_FILE '*.zookeeper'))"
+    eval zk_versions="($(yq eval '.[] | select(.supported == true) | .zookeeper' $VERSIONS_FILE))"
 }
 
 function get_kafka_checksums {
-    eval checksums="($(yq read $VERSIONS_FILE '*.checksum'))"
+    eval checksums="($(yq eval '.[] | select(.supported == true) | .checksum' $VERSIONS_FILE))"
 }
 
 function get_kafka_third_party_libs {
-    eval libs="($(yq read "$VERSIONS_FILE" '*.third-party-libs'))"
+    eval libs="($(yq eval '.[] | select(.supported == true) | .third-party-libs' $VERSIONS_FILE))"
 }
 
 function get_kafka_protocols {
-    eval protocols="($(yq read $VERSIONS_FILE '*.protocol'))"
+    eval protocols="($(yq eval '.[] | select(.supported == true) | .protocol' $VERSIONS_FILE))"
 }
 
 function get_kafka_formats {
-    eval formats="($(yq read $VERSIONS_FILE '*.format'))"
+    eval formats="($(yq eval '.[] | select(.supported == true) | .format' $VERSIONS_FILE))"
 }
 
 function get_kafka_does_not_support {
-    eval does_not_support="($(yq read $VERSIONS_FILE '*.unsupported-features'))"
+    eval does_not_support="($(yq eval '.[] | select(.supported == true) | .unsupported-features' $VERSIONS_FILE))"
 
     get_kafka_versions
     

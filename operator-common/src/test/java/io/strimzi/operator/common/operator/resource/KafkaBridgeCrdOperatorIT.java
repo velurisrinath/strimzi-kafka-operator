@@ -4,16 +4,13 @@
  */
 package io.strimzi.operator.common.operator.resource;
 
-import io.fabric8.kubernetes.api.model.apiextensions.CustomResourceDefinition;
 import io.fabric8.kubernetes.client.KubernetesClient;
-import io.strimzi.api.kafka.Crds;
 import io.strimzi.api.kafka.KafkaBridgeList;
-import io.strimzi.api.kafka.model.DoneableKafkaBridge;
 import io.strimzi.api.kafka.model.InlineLogging;
 import io.strimzi.api.kafka.model.KafkaBridge;
 import io.strimzi.api.kafka.model.KafkaBridgeBuilder;
 import io.strimzi.api.kafka.model.status.ConditionBuilder;
-
+import io.strimzi.test.TestUtils;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import org.apache.logging.log4j.LogManager;
@@ -30,17 +27,22 @@ import static org.hamcrest.MatcherAssert.assertThat;
  * test them against real clusters.
  */
 @ExtendWith(VertxExtension.class)
-public class KafkaBridgeCrdOperatorIT extends AbstractCustomResourceOperatorIT<KubernetesClient, KafkaBridge, KafkaBridgeList, DoneableKafkaBridge> {
+public class KafkaBridgeCrdOperatorIT extends AbstractCustomResourceOperatorIT<KubernetesClient, KafkaBridge, KafkaBridgeList> {
     protected static final Logger log = LogManager.getLogger(KafkaBridgeCrdOperatorIT.class);
 
     @Override
     protected CrdOperator operator() {
-        return new CrdOperator(vertx, client, KafkaBridge.class, KafkaBridgeList.class, DoneableKafkaBridge.class, Crds.kafkaBridge());
+        return new CrdOperator(vertx, client, KafkaBridge.class, KafkaBridgeList.class, KafkaBridge.RESOURCE_KIND);
     }
 
     @Override
-    protected CustomResourceDefinition getCrd() {
-        return Crds.kafkaBridge();
+    protected String getCrd() {
+        return TestUtils.CRD_KAFKA_BRIDGE;
+    }
+
+    @Override
+    protected String getCrdName() {
+        return KafkaBridge.CRD_NAME;
     }
 
     @Override
@@ -48,14 +50,15 @@ public class KafkaBridgeCrdOperatorIT extends AbstractCustomResourceOperatorIT<K
         return "bridge-crd-it-namespace";
     }
 
-    protected KafkaBridge getResource() {
+    @Override
+    protected KafkaBridge getResource(String resourceName) {
         return new KafkaBridgeBuilder()
-                .withApiVersion(KafkaBridge.RESOURCE_GROUP + "/" + KafkaBridge.V1ALPHA1)
                 .withNewMetadata()
-                .withName(RESOURCE_NAME)
-                .withNamespace(getNamespace())
+                    .withName(resourceName)
+                    .withNamespace(getNamespace())
                 .endMetadata()
                 .withNewSpec()
+                    .withNewBootstrapServers("localhost:9092")
                 .endSpec()
                 .withNewStatus()
                 .endStatus()
@@ -66,7 +69,7 @@ public class KafkaBridgeCrdOperatorIT extends AbstractCustomResourceOperatorIT<K
     protected KafkaBridge getResourceWithModifications(KafkaBridge resourceInCluster) {
         return new KafkaBridgeBuilder(resourceInCluster)
                 .editSpec()
-                .withLogging(new InlineLogging())
+                    .withLogging(new InlineLogging())
                 .endSpec()
                 .build();
     }

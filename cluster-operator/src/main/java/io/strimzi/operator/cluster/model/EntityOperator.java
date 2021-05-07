@@ -4,7 +4,8 @@
  */
 package io.strimzi.operator.cluster.model;
 
-import io.fabric8.kubernetes.api.model.Affinity;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.ContainerBuilder;
 import io.fabric8.kubernetes.api.model.EnvVar;
@@ -14,11 +15,13 @@ import io.fabric8.kubernetes.api.model.LocalObjectReference;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecurityContext;
 import io.fabric8.kubernetes.api.model.ServiceAccount;
-import io.fabric8.kubernetes.api.model.Toleration;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.api.model.apps.DeploymentStrategy;
 import io.fabric8.kubernetes.api.model.apps.DeploymentStrategyBuilder;
+import io.fabric8.kubernetes.api.model.rbac.ClusterRole;
+import io.fabric8.kubernetes.api.model.rbac.PolicyRule;
+import io.fabric8.kubernetes.api.model.rbac.Role;
 import io.strimzi.api.kafka.model.ContainerEnvVar;
 import io.strimzi.api.kafka.model.EntityOperatorSpec;
 import io.strimzi.api.kafka.model.JvmOptions;
@@ -29,11 +32,17 @@ import io.strimzi.api.kafka.model.SystemProperty;
 import io.strimzi.api.kafka.model.TlsSidecar;
 import io.strimzi.api.kafka.model.template.EntityOperatorTemplate;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
+import io.strimzi.operator.cluster.Main;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Represents the Entity Operator deployment
@@ -48,9 +57,12 @@ public class EntityOperator extends AbstractModel {
     protected static final String TLS_SIDECAR_CA_CERTS_VOLUME_NAME = "cluster-ca-certs";
     protected static final String TLS_SIDECAR_CA_CERTS_VOLUME_MOUNT = "/etc/tls-sidecar/cluster-ca-certs/";
 
+    // Volume name of the temporary volume used by the TLS sidecar container
+    // Because the container shares the pod with other containers, it needs to have unique name
+    /*test*/ static final String TLS_SIDECAR_TMP_DIRECTORY_DEFAULT_VOLUME_NAME = "strimzi-tls-sidecar-tmp";
+
     // Entity Operator configuration keys
     public static final String ENV_VAR_ZOOKEEPER_CONNECT = "STRIMZI_ZOOKEEPER_CONNECT";
-    public static final String EO_CLUSTER_ROLE_NAME = "strimzi-entity-operator";
 
     private String zookeeperConnect;
     private EntityTopicOperator topicOperator;
@@ -99,7 +111,7 @@ public class EntityOperator extends AbstractModel {
     }
 
     protected static String defaultZookeeperConnect(String cluster) {
-        return ZookeeperCluster.serviceName(cluster) + ":" + EntityOperatorSpec.DEFAULT_ZOOKEEPER_PORT;
+        return ZookeeperCluster.serviceName(cluster) + ":" + ZookeeperCluster.CLIENT_TLS_PORT;
     }
 
     public void setZookeeperConnect(String zookeeperConnect) {
@@ -137,9 +149,6 @@ public class EntityOperator extends AbstractModel {
             result = new EntityOperator(kafkaAssembly);
 
             result.setOwnerReference(kafkaAssembly);
-
-            result.setUserAffinity(affinity(entityOperatorSpec));
-            result.setTolerations(tolerations(entityOperatorSpec));
 
             EntityTopicOperator topicOperator = EntityTopicOperator.fromCrd(kafkaAssembly);
             EntityUserOperator userOperator = EntityUserOperator.fromCrd(kafkaAssembly);
@@ -195,34 +204,6 @@ public class EntityOperator extends AbstractModel {
         return result;
     }
 
-    @SuppressWarnings("deprecation")
-    static List<Toleration> tolerations(EntityOperatorSpec entityOperatorSpec) {
-        if (entityOperatorSpec.getTemplate() != null
-                && entityOperatorSpec.getTemplate().getPod() != null
-                && entityOperatorSpec.getTemplate().getPod().getTolerations() != null) {
-            if (entityOperatorSpec.getTolerations() != null) {
-                log.warn("Tolerations given on both spec.tolerations and spec.template.deployment.tolerations; latter takes precedence");
-            }
-            return entityOperatorSpec.getTemplate().getPod().getTolerations();
-        } else {
-            return entityOperatorSpec.getTolerations();
-        }
-    }
-
-    @SuppressWarnings("deprecation")
-    static Affinity affinity(EntityOperatorSpec entityOperatorSpec) {
-        if (entityOperatorSpec.getTemplate() != null
-                && entityOperatorSpec.getTemplate().getPod() != null
-                && entityOperatorSpec.getTemplate().getPod().getAffinity() != null) {
-            if (entityOperatorSpec.getAffinity() != null) {
-                log.warn("Affinity given on both spec.affinity and spec.template.deployment.affinity; latter takes precedence");
-            }
-            return entityOperatorSpec.getTemplate().getPod().getAffinity();
-        } else {
-            return entityOperatorSpec.getAffinity();
-        }
-    }
-
     @Override
     protected String getDefaultLogConfigFileName() {
         return null;
@@ -253,7 +234,7 @@ public class EntityOperator extends AbstractModel {
 
     @Override
     protected List<Container> getContainers(ImagePullPolicy imagePullPolicy) {
-        List<Container> containers = new ArrayList<>();
+        List<Container> containers = new ArrayList<>(3);
 
         if (topicOperator != null) {
             containers.addAll(topicOperator.getContainers(imagePullPolicy));
@@ -271,11 +252,12 @@ public class EntityOperator extends AbstractModel {
                 .withName(TLS_SIDECAR_NAME)
                 .withImage(tlsSidecarImage)
                 .withCommand("/opt/stunnel/entity_operator_stunnel_run.sh")
-                .withLivenessProbe(ModelUtils.tlsSidecarLivenessProbe(tlsSidecar))
-                .withReadinessProbe(ModelUtils.tlsSidecarReadinessProbe(tlsSidecar))
+                .withLivenessProbe(ProbeGenerator.tlsSidecarLivenessProbe(tlsSidecar))
+                .withReadinessProbe(ProbeGenerator.tlsSidecarReadinessProbe(tlsSidecar))
                 .withResources(tlsSidecar != null ? tlsSidecar.getResources() : null)
                 .withEnv(getTlsSidecarEnvVars())
-                .withVolumeMounts(VolumeUtils.createVolumeMount(TLS_SIDECAR_EO_CERTS_VOLUME_NAME, TLS_SIDECAR_EO_CERTS_VOLUME_MOUNT),
+                .withVolumeMounts(createTempDirVolumeMount(TLS_SIDECAR_TMP_DIRECTORY_DEFAULT_VOLUME_NAME),
+                        VolumeUtils.createVolumeMount(TLS_SIDECAR_EO_CERTS_VOLUME_NAME, TLS_SIDECAR_EO_CERTS_VOLUME_MOUNT),
                         VolumeUtils.createVolumeMount(TLS_SIDECAR_CA_CERTS_VOLUME_NAME, TLS_SIDECAR_CA_CERTS_VOLUME_MOUNT))
                 .withLifecycle(new LifecycleBuilder().withNewPreStop().withNewExec()
                             .withCommand("/opt/stunnel/entity_operator_stunnel_pre_stop.sh")
@@ -294,19 +276,26 @@ public class EntityOperator extends AbstractModel {
         varList.add(ModelUtils.tlsSidecarLogEnvVar(tlsSidecar));
         varList.add(buildEnvVar(ENV_VAR_ZOOKEEPER_CONNECT, zookeeperConnect));
 
+        // Add shared environment variables used for all containers
+        varList.addAll(getRequiredEnvVars());
+
         addContainerEnvsToExistingEnvs(varList, templateTlsSidecarContainerEnvVars);
 
         return varList;
     }
 
     private List<Volume> getVolumes(boolean isOpenShift) {
-        List<Volume> volumeList = new ArrayList<>();
+        List<Volume> volumeList = new ArrayList<>(7);
+
         if (topicOperator != null) {
             volumeList.addAll(topicOperator.getVolumes());
         }
+
         if (userOperator != null) {
             volumeList.addAll(userOperator.getVolumes());
         }
+
+        volumeList.add(createTempDirVolume(TLS_SIDECAR_TMP_DIRECTORY_DEFAULT_VOLUME_NAME));
         volumeList.add(VolumeUtils.createSecretVolume(TLS_SIDECAR_EO_CERTS_VOLUME_NAME, EntityOperator.secretName(cluster), isOpenShift));
         volumeList.add(VolumeUtils.createSecretVolume(TLS_SIDECAR_CA_CERTS_VOLUME_NAME, AbstractModel.clusterCaCertSecretName(cluster), isOpenShift));
         return volumeList;
@@ -353,6 +342,59 @@ public class EntityOperator extends AbstractModel {
         return super.generateServiceAccount();
     }
 
+    @Override
+    protected String getRoleName() {
+        return getRoleName(cluster);
+    }
+
+    /**
+     * Get the name of the Entity Operator Role given the name of the {@code cluster}.
+     * @param cluster The cluster name
+     * @return The name of the EO role.
+     */
+    public static String getRoleName(String cluster) {
+        return entityOperatorName(cluster);
+    }
+
+    /**
+     * Read the entity operator ClusterRole, and use the rules to create a new Role.
+     * This is done to avoid duplication of the rules set defined in source code.
+     * If the namespace of the role is not the same as the namespace of the parent resource (Kafka CR), we do not set
+     * the owner reference.
+     *
+     * @param ownerNamespace        The namespace of the parent resource (the Kafka CR)
+     * @param namespace             The namespace this role will be located
+     *
+     * @return role for the entity operator
+     */
+    public Role generateRole(String ownerNamespace, String namespace) {
+        List<PolicyRule> rules;
+
+        try (BufferedReader br = new BufferedReader(
+                new InputStreamReader(
+                    Main.class.getResourceAsStream("/cluster-roles/031-ClusterRole-strimzi-entity-operator.yaml"),
+                    StandardCharsets.UTF_8)
+            )
+        ) {
+            String yaml = br.lines().collect(Collectors.joining(System.lineSeparator()));
+            ObjectMapper yamlReader = new ObjectMapper(new YAMLFactory());
+            ClusterRole cr = yamlReader.readValue(yaml, ClusterRole.class);
+            rules = cr.getRules();
+        } catch (IOException e) {
+            log.error("Failed to read entity-operator ClusterRole.", e);
+            throw new RuntimeException(e);
+        }
+
+        Role role = super.generateRole(namespace, rules);
+
+        // We set OwnerReference only within the same namespace since it does not work cross-namespace
+        if (!namespace.equals(ownerNamespace)) {
+            role.getMetadata().setOwnerReferences(Collections.emptyList());
+        }
+
+        return role;
+    }
+
     protected static void javaOptions(List<EnvVar> envVars, JvmOptions jvmOptions, List<SystemProperty> javaSystemProperties) {
         StringBuilder strimziJavaOpts = new StringBuilder();
         String xms = jvmOptions != null ? jvmOptions.getXms() : null;
@@ -363,12 +405,6 @@ public class EntityOperator extends AbstractModel {
         String xmx = jvmOptions != null ? jvmOptions.getXmx() : null;
         if (xmx != null) {
             strimziJavaOpts.append(" -Xmx").append(xmx);
-        }
-
-        Boolean server = jvmOptions != null ? jvmOptions.isServer() : null;
-
-        if (server != null && server) {
-            strimziJavaOpts.append(' ').append(" -server");
         }
 
         Map<String, String> xx = jvmOptions != null ? jvmOptions.getXx() : null;

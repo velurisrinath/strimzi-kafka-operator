@@ -4,14 +4,12 @@
  */
 package io.strimzi.operator.common.operator.resource;
 
-import io.fabric8.kubernetes.api.model.apiextensions.CustomResourceDefinition;
 import io.fabric8.kubernetes.client.KubernetesClient;
-import io.strimzi.api.kafka.Crds;
 import io.strimzi.api.kafka.KafkaMirrorMakerList;
-import io.strimzi.api.kafka.model.DoneableKafkaMirrorMaker;
 import io.strimzi.api.kafka.model.InlineLogging;
 import io.strimzi.api.kafka.model.KafkaMirrorMaker;
 import io.strimzi.api.kafka.model.KafkaMirrorMakerBuilder;
+import io.strimzi.test.TestUtils;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import org.apache.logging.log4j.LogManager;
@@ -28,32 +26,45 @@ import static org.hamcrest.MatcherAssert.assertThat;
  * test them against real clusters.
  */
 @ExtendWith(VertxExtension.class)
-public class KafkaMirrorMakerCrdOperatorIT extends AbstractCustomResourceOperatorIT<KubernetesClient, KafkaMirrorMaker, KafkaMirrorMakerList, DoneableKafkaMirrorMaker> {
+public class KafkaMirrorMakerCrdOperatorIT extends AbstractCustomResourceOperatorIT<KubernetesClient, KafkaMirrorMaker, KafkaMirrorMakerList> {
     protected static final Logger log = LogManager.getLogger(KafkaMirrorMakerCrdOperatorIT.class);
 
     @Override
     protected CrdOperator operator() {
-        return new CrdOperator(vertx, client, KafkaMirrorMaker.class, KafkaMirrorMakerList.class, DoneableKafkaMirrorMaker.class, Crds.kafkaMirrorMaker());
+        return new CrdOperator(vertx, client, KafkaMirrorMaker.class, KafkaMirrorMakerList.class, KafkaMirrorMaker.RESOURCE_KIND);
     }
 
     @Override
-    protected CustomResourceDefinition getCrd() {
-        return Crds.kafkaMirrorMaker();
+    protected String getCrd() {
+        return TestUtils.CRD_KAFKA_MIRROR_MAKER;
+    }
+
+    @Override
+    protected String getCrdName() {
+        return KafkaMirrorMaker.CRD_NAME;
     }
 
     @Override
     protected String getNamespace() {
-        return "kafka-mirror-make-2-crd-it-namespace";
+        return "kafka-mirror-maker-2-crd-it-namespace";
     }
 
-    protected KafkaMirrorMaker getResource() {
+    @Override
+    protected KafkaMirrorMaker getResource(String resourceName) {
         return new KafkaMirrorMakerBuilder()
-                .withApiVersion(KafkaMirrorMaker.RESOURCE_GROUP + "/" + KafkaMirrorMaker.V1BETA1)
                 .withNewMetadata()
-                    .withName(RESOURCE_NAME)
+                    .withName(resourceName)
                     .withNamespace(getNamespace())
                 .endMetadata()
                 .withNewSpec()
+                    .withNewConsumer()
+                        .withBootstrapServers("localhost:9092")
+                        .withGroupId("my-group")
+                    .endConsumer()
+                    .withNewProducer()
+                        .withBootstrapServers("localhost:9092")
+                    .endProducer()
+                    .withWhitelist(".*")
                 .endSpec()
                 .withNewStatus()
                 .endStatus()

@@ -4,9 +4,8 @@
  */
 package io.strimzi.systemtest.kafkaclients.internalClients;
 
-import io.strimzi.test.executor.Exec;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import static io.strimzi.systemtest.resources.ResourceManager.kubeClient;
+import static io.strimzi.test.k8s.KubeClusterResource.cmdKubeClient;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -17,8 +16,10 @@ import java.util.concurrent.ExecutionException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static io.strimzi.systemtest.resources.ResourceManager.kubeClient;
-import static io.strimzi.test.k8s.KubeClusterResource.cmdKubeClient;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import io.strimzi.test.executor.Exec;
 
 /**
  * Class represent verifiable kafka client which keeps common features of kafka clients
@@ -45,7 +46,6 @@ public class VerifiableClient {
     private ClientArgumentMap clientArgumentMap;
 
     public static class VerifiableClientBuilder {
-
         private ClientType clientType;
         private String podName;
         private String podNamespace;
@@ -57,67 +57,56 @@ public class VerifiableClient {
         private String consumerInstanceId;
 
         public VerifiableClientBuilder withClientType(ClientType clientType) {
-
             this.clientType = clientType;
             return this;
         }
 
         public VerifiableClientBuilder withUsingPodName(String podName) {
-
             this.podName = podName;
             return this;
         }
 
         public VerifiableClientBuilder withPodNamespace(String podNamespace) {
-
             this.podNamespace = podNamespace;
             return this;
         }
 
         public VerifiableClientBuilder withBootstrapServer(String bootstrapServer) {
-
             this.bootstrapServer = bootstrapServer;
             return this;
         }
 
         public VerifiableClientBuilder withTopicName(String topicName) {
-
             this.topicName = topicName;
             return this;
         }
 
         public VerifiableClientBuilder withMaxMessages(int maxMessages) {
-
             this.maxMessages = maxMessages;
             return this;
         }
 
         public VerifiableClientBuilder withKafkaUsername(String kafkaUsername) {
-
             this.kafkaUsername = kafkaUsername;
             return this;
         }
 
         public VerifiableClientBuilder withConsumerGroupName(String consumerGroupName) {
-
             this.consumerGroupName = consumerGroupName;
             return this;
         }
 
         public VerifiableClientBuilder withConsumerInstanceId(String consumerInstanceId) {
-
             this.consumerInstanceId = consumerInstanceId;
             return this;
         }
 
         protected VerifiableClient build() {
             return new VerifiableClient(this);
-
         }
     }
 
     public VerifiableClient(VerifiableClientBuilder verifiableClientBuilder) {
-
         this.clientType = verifiableClientBuilder.clientType;
         this.podName = verifiableClientBuilder.podName;
         this.podNamespace = verifiableClientBuilder.podNamespace;
@@ -128,23 +117,32 @@ public class VerifiableClient {
 
         this.setAllowedArguments(this.clientType);
         this.clientArgumentMap = new ClientArgumentMap();
-        this.clientArgumentMap.put(ClientArgument.BROKER_LIST, bootstrapServer);
         this.clientArgumentMap.put(ClientArgument.TOPIC, topicName);
         this.clientArgumentMap.put(ClientArgument.MAX_MESSAGES, Integer.toString(maxMessages));
-        if (kafkaUsername != null) this.clientArgumentMap.put(ClientArgument.USER,  kafkaUsername.replace("-", "_"));
+        if (kafkaUsername != null) this.clientArgumentMap.put(ClientArgument.USER, kafkaUsername.replace("-", "_"));
+
+        String image = kubeClient().namespace(podNamespace).getPod(podNamespace, this.podName).getSpec().getContainers().get(0).getImage();
+        String clientVersion = image.substring(image.length() - 5);
+
+        this.clientArgumentMap.put(allowParameter("2.5.0", clientVersion) ? ClientArgument.BOOTSTRAP_SERVER : ClientArgument.BROKER_LIST, bootstrapServer);
 
         if (clientType == ClientType.CLI_KAFKA_VERIFIABLE_CONSUMER) {
             this.consumerGroupName = verifiableClientBuilder.consumerGroupName;
             this.clientArgumentMap.put(ClientArgument.GROUP_ID, consumerGroupName);
-
-            String image = kubeClient().getPod(this.podName).getSpec().getContainers().get(0).getImage();
-            String clientVersion = image.substring(image.length() - 5);
 
             if (allowParameter("2.3.0", clientVersion)) {
                 this.consumerInstanceId = verifiableClientBuilder.consumerInstanceId;
                 this.clientArgumentMap.put(ClientArgument.GROUP_INSTANCE_ID, this.consumerInstanceId);
             }
         }
+
+        if (clientType == ClientType.CLI_KAFKA_CONSUMER_GROUPS) {
+            this.consumerGroupName = verifiableClientBuilder.consumerGroupName;
+            this.clientArgumentMap.put(ClientArgument.GROUP, consumerGroupName);
+            this.clientArgumentMap.put(ClientArgument.DESCRIBE, "");
+        }
+
+        LOGGER.debug("This is all args {}, which are set.", this.clientArgumentMap);
 
         this.setArguments(this.clientArgumentMap);
         this.executable = ClientType.getCommand(clientType);
@@ -209,12 +207,12 @@ public class VerifiableClient {
                         LOGGER.info("{} RETURN code: {}", clientType,  ret);
                         if (!executor.out().isEmpty()) {
                             LOGGER.info("======STDOUT START=======");
-                            LOGGER.info("{}", executor.out());
+                            LOGGER.info("{}", Exec.cutExecutorLog(executor.out()));
                             LOGGER.info("======STDOUT END======");
                         }
                         if (!executor.err().isEmpty()) {
                             LOGGER.info("======STDERR START=======");
-                            LOGGER.info("{}", executor.err());
+                            LOGGER.info("{}", Exec.cutExecutorLog(executor.err()));
                             LOGGER.info("======STDERR END======");
                         }
                     }
@@ -298,6 +296,7 @@ public class VerifiableClient {
         switch (clientType) {
             case CLI_KAFKA_VERIFIABLE_PRODUCER:
                 allowedArguments.add(ClientArgument.TOPIC);
+                allowedArguments.add(ClientArgument.BOOTSTRAP_SERVER);
                 allowedArguments.add(ClientArgument.BROKER_LIST);
                 allowedArguments.add(ClientArgument.MAX_MESSAGES);
                 allowedArguments.add(ClientArgument.THROUGHPUT);
@@ -309,6 +308,7 @@ public class VerifiableClient {
                 allowedArguments.add(ClientArgument.USER);
                 break;
             case CLI_KAFKA_VERIFIABLE_CONSUMER:
+                allowedArguments.add(ClientArgument.BOOTSTRAP_SERVER);
                 allowedArguments.add(ClientArgument.BROKER_LIST);
                 allowedArguments.add(ClientArgument.TOPIC);
                 allowedArguments.add(ClientArgument.GROUP_ID);
@@ -321,6 +321,11 @@ public class VerifiableClient {
                 allowedArguments.add(ClientArgument.CONSUMER_CONFIG);
                 allowedArguments.add(ClientArgument.USER);
                 allowedArguments.add(ClientArgument.GROUP_INSTANCE_ID);
+                break;
+            case CLI_KAFKA_CONSUMER_GROUPS:
+                allowedArguments.add(ClientArgument.BOOTSTRAP_SERVER);
+                allowedArguments.add(ClientArgument.GROUP);
+                allowedArguments.add(ClientArgument.DESCRIBE);
                 break;
             default:
                 throw new IllegalArgumentException("Unexpected client type!");

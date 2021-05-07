@@ -12,6 +12,7 @@ import io.sundr.builder.annotations.Buildable;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -22,13 +23,15 @@ import java.util.Map;
         builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
-@JsonPropertyOrder({ "conditions", "observedGeneration", "url" })
+@JsonPropertyOrder({ "conditions", "observedGeneration", "connectorStatus", "tasksMax", "topics" })
 @EqualsAndHashCode
 @ToString(callSuper = true)
 public class KafkaConnectorStatus extends Status {
     private static final long serialVersionUID = 1L;
 
     private Map<String, Object> connectorStatus;
+    private int tasksMax;
+    private List<String> topics;
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     @Description("The connector status, as reported by the Kafka Connect REST API.")
@@ -38,5 +41,25 @@ public class KafkaConnectorStatus extends Status {
 
     public void setConnectorStatus(Map<String, Object> connectorStatus) {
         this.connectorStatus = connectorStatus;
+    }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @Description("The maximum number of tasks for the Kafka Connector.")
+    public int getTasksMax() {
+        return tasksMax;
+    }
+
+    public void setTasksMax(int tasksMax) {
+        this.tasksMax = tasksMax;
+    }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @Description("The list of topics used by the Kafka Connector.")
+    public List<String> getTopics() {
+        return topics;
+    }
+
+    public void setTopics(List<String> topics) {
+        this.topics = topics;
     }
 }

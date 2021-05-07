@@ -16,22 +16,55 @@
 #   <zookeeper> is the version of zookeeper required by this version of Kafka.
 #   <third-party-libs> is the version string for the third party libraries
 #   <unsupported-features> is a list of Strimzi features that are not supported by this Kafka version
+#   <supported> when `true` this version is currently supported by the operator. Unsupported versions are kept for historical reasons.
 
+- version: 2.1.0
+  format: 2.1
+  protocol: 2.1
+  zookeeper: 3.4.13
+  supported: false
+  default: false
+- version: 2.1.1
+  format: 2.1
+  protocol: 2.1
+  zookeeper: 3.4.13
+  supported: false
+  default: false
+- version: 2.2.0
+  format: 2.2
+  protocol: 2.2
+  zookeeper: 3.4.13
+  supported: false
+  default: false
+- version: 2.2.1
+  format: 2.2
+  protocol: 2.2
+  zookeeper: 3.4.13
+  supported: false
+  default: false
+- version: 2.3.0
+  format: 2.3
+  protocol: 2.3
+  zookeeper: 3.4.14
+  supported: false
+  default: false
+- version: 2.3.1
+  format: 2.3
+  protocol: 2.3
+  zookeeper: 3.4.14
+  supported: false
+  default: false
 - version: 2.4.0
   format: 2.4
   protocol: 2.4
-  url: https://archive.apache.org/dist/kafka/2.4.0/kafka_2.12-2.4.0.tgz
-  checksum: 53B52F86EA56C9FAC62046524F03F75665A089EA2DAE554AEFE3A3D2694F2DA88B5BA8725D8BE55F198BA80695443559ED9DE7C0B2A2817F7A6141008FF79F49
   zookeeper: 3.5.6
-  third-party-libs: 2.4.x
+  supported: false
   default: false
 - version: 2.4.1
   format: 2.4
   protocol: 2.4
-  url: https://archive.apache.org/dist/kafka/2.4.1/kafka_2.12-2.4.1.tgz
-  checksum: 8582DC25CB14A2E9C6966EFD98E41CD0EBF6369B42436954800B847298E763B22CAECF130FDCCC58BF79FE9E95FACCE6E0B5AACAD072D69F6DC1EED7678A49B8
   zookeeper: 3.5.7
-  third-party-libs: 2.4.x
+  supported: false
   default: false
 - version: 2.5.0
   format: 2.5
@@ -40,4 +73,59 @@
   checksum: 447A7057BCD9FACA98B6F4807BD6019EF73EEE90EFDC1E7B10005F669E2537A8A190CB8B9C9F4C20DB1D95B13D0F0487E9CC560D0759532058439CE7F722C7CD
   zookeeper: 3.5.7
   third-party-libs: 2.5.x
+  supported: false
+  default: false
+- version: 2.5.1
+  format: 2.5
+  protocol: 2.5
+  url: https://archive.apache.org/dist/kafka/2.5.1/kafka_2.12-2.5.1.tgz
+  checksum: 91F96F28C016BDAA3FE025F87ACE188417A1E594C8E32B7D23A104AA390BC25F5DB5897E23CCCF00EA7EDE3AC20B3028C10363EBE99DCBD7DB2CF6237EE7553A
+  zookeeper: 3.5.8
+  third-party-libs: 2.5.x
+  supported: false
+  default: false
+- version: 2.6.0
+  format: 2.6
+  protocol: 2.6
+  url: https://archive.apache.org/dist/kafka/2.6.0/kafka_2.12-2.6.0.tgz
+  checksum: 022AB51605DFFB8A0E4522DF297F02F4C5E488696520BB38DA8E8E70457C0B2696A47D7AD39A86389B747981215B385B2659AC25B3D43A6093AF13239723560D
+  zookeeper: 3.5.8
+  third-party-libs: 2.6.x
+  supported: true
+  default: false
+- version: 2.6.1
+  format: 2.6
+  protocol: 2.6
+  url: https://archive.apache.org/dist/kafka/2.6.1/kafka_2.12-2.6.1.tgz
+  checksum: 105BF29E4BED9F1B7A7A3CAADF016DF8AA774F6F509E3606529F8231EA4CAB89C38236C58BE9C2E9BD3C52C2917892EA5D3A5EC0BD94BD8A5F7257522A5AF4DB
+  zookeeper: 3.5.8
+  third-party-libs: 2.6.x
+  supported: true
+  default: false
+- version: 2.6.2
+  format: 2.6
+  protocol: 2.6
+  url: https://archive.apache.org/dist/kafka/2.6.2/kafka_2.12-2.6.2.tgz
+  checksum: 70F992DFAB02D1E727E352124D53F89B096868E738DFC50563890EA394ADFE056B132BDC8BAD70BDD6CE48B0C7561CDB33CC50D56586F09BAD96FF699A054F85
+  zookeeper: 3.5.9
+  third-party-libs: 2.6.x
+  supported: true
+  default: false
+- version: 2.7.0
+  format: 2.7
+  protocol: 2.7
+  url: https://archive.apache.org/dist/kafka/2.7.0/kafka_2.12-2.7.0.tgz
+  checksum: ADAD48E6D9C9BF6577FC97DB10BFE9EF3755DA7B3060ED633EDB89EB99722DC81B111BAB2C91E7875E0A866A1020C8C31904B088D2A9F9950796EDA8ED789CCD
+  zookeeper: 3.5.8
+  third-party-libs: 2.7.x
+  supported: true
+  default: false
+- version: 2.8.0
+  format: 2.8
+  protocol: 2.8
+  url: https://archive.apache.org/dist/kafka/2.8.0/kafka_2.12-2.8.0.tgz
+  checksum: EE0E231253ECA43BFFBFCFFCF431828C96DF55511EAEFC5EACBA39C41232DA991B8C7425F927A780BABF7972DC183FF688CF5B76EBF400E95D3280BC30741EBB
+  zookeeper: 3.5.9
+  third-party-libs: 2.8.x
+  supported: true
   default: true

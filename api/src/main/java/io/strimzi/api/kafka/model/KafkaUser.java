@@ -9,15 +9,16 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
-import io.fabric8.kubernetes.api.model.Doneable;
+import io.fabric8.kubernetes.api.model.Namespaced;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.client.CustomResource;
-import io.strimzi.api.kafka.model.status.HasStatus;
+import io.fabric8.kubernetes.model.annotation.Group;
+import io.fabric8.kubernetes.model.annotation.Version;
 import io.strimzi.api.kafka.model.status.KafkaUserStatus;
 import io.strimzi.crdgenerator.annotations.Crd;
 import io.strimzi.crdgenerator.annotations.Description;
 import io.sundr.builder.annotations.Buildable;
-import io.sundr.builder.annotations.Inline;
+import io.sundr.builder.annotations.BuildableReference;
 import lombok.EqualsAndHashCode;
 
 import java.util.HashMap;
@@ -31,7 +32,6 @@ import static java.util.Collections.unmodifiableList;
 
 @JsonDeserialize
 @Crd(
-        apiVersion = KafkaUser.CRD_API_VERSION,
         spec = @Crd.Spec(
                 names = @Crd.Spec.Names(
                         kind = KafkaUser.RESOURCE_KIND,
@@ -41,23 +41,21 @@ import static java.util.Collections.unmodifiableList;
                 ),
                 group = KafkaUser.RESOURCE_GROUP,
                 scope = KafkaUser.SCOPE,
-                version = KafkaUser.V1BETA1,
                 versions = {
-                        @Crd.Spec.Version(
-                                name = KafkaUser.V1BETA1,
-                                served = true,
-                                storage = true
-                        ),
-                        @Crd.Spec.Version(
-                                name = KafkaUser.V1ALPHA1,
-                                served = true,
-                                storage = false
-                        )
+                        @Crd.Spec.Version(name = KafkaUser.V1BETA2, served = true, storage = false),
+                        @Crd.Spec.Version(name = KafkaUser.V1BETA1, served = true, storage = true),
+                        @Crd.Spec.Version(name = KafkaUser.V1ALPHA1, served = true, storage = false)
                 },
                 subresources = @Crd.Spec.Subresources(
                         status = @Crd.Spec.Subresources.Status()
                 ),
                 additionalPrinterColumns = {
+                        @Crd.Spec.AdditionalPrinterColumn(
+                                name = "Cluster",
+                                description = "The name of the Kafka cluster this user belongs to",
+                                jsonPath = ".metadata.labels.strimzi\\.io/cluster",
+                                type = "string"
+                        ),
                         @Crd.Spec.AdditionalPrinterColumn(
                                 name = "Authentication",
                                 description = "How the user is authenticated",
@@ -69,33 +67,40 @@ import static java.util.Collections.unmodifiableList;
                                 description = "How the user is authorised",
                                 jsonPath = ".spec.authorization.type",
                                 type = "string"
+                        ),
+                        @Crd.Spec.AdditionalPrinterColumn(
+                                name = "Ready",
+                                description = "The state of the custom resource",
+                                jsonPath = ".status.conditions[?(@.type==\"Ready\")].status",
+                                type = "string"
                         )
                 }
-
         )
 )
 @Buildable(
         editableEnabled = false,
         builderPackage = Constants.FABRIC8_KUBERNETES_API,
-        inline = @Inline(type = Doneable.class, prefix = "Doneable", value = "done")
+        refs = {@BuildableReference(ObjectMeta.class)}
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonPropertyOrder({"apiVersion", "kind", "metadata", "spec", "status"})
 @EqualsAndHashCode
-public class KafkaUser extends CustomResource implements UnknownPropertyPreserving, HasStatus<KafkaUserStatus> {
-
+@Version(Constants.V1BETA2)
+@Group(Constants.STRIMZI_GROUP)
+public class KafkaUser extends CustomResource<KafkaUserSpec, KafkaUserStatus> implements Namespaced, UnknownPropertyPreserving {
     private static final long serialVersionUID = 1L;
 
     public static final String SCOPE = "Namespaced";
     public static final String V1ALPHA1 = Constants.V1ALPHA1;
     public static final String V1BETA1 = Constants.V1BETA1;
-    public static final List<String> VERSIONS = unmodifiableList(asList(V1BETA1, V1ALPHA1));
+    public static final String V1BETA2 = Constants.V1BETA2;
+    public static final String CONSUMED_VERSION = V1BETA2;
+    public static final List<String> VERSIONS = unmodifiableList(asList(V1BETA2, V1BETA1, V1ALPHA1));
     public static final String RESOURCE_KIND = "KafkaUser";
     public static final String RESOURCE_LIST_KIND = RESOURCE_KIND + "List";
     public static final String RESOURCE_GROUP = Constants.RESOURCE_GROUP_NAME;
     public static final String RESOURCE_PLURAL = "kafkausers";
     public static final String RESOURCE_SINGULAR = "kafkauser";
-    public static final String CRD_API_VERSION = Constants.V1BETA1_API_VERSION;
     public static final String CRD_NAME = RESOURCE_PLURAL + "." + RESOURCE_GROUP;
     public static final String SHORT_NAME = "ku";
     public static final List<String> RESOURCE_SHORTNAMES = singletonList(SHORT_NAME);
@@ -118,19 +123,21 @@ public class KafkaUser extends CustomResource implements UnknownPropertyPreservi
 
     @Override
     public ObjectMeta getMetadata() {
-        return super.getMetadata();
+        return metadata;
     }
 
     @Override
     public void setMetadata(ObjectMeta metadata) {
-        super.setMetadata(metadata);
+        this.metadata = metadata;
     }
 
+    @Override
     @Description("The specification of the user.")
     public KafkaUserSpec getSpec() {
         return spec;
     }
 
+    @Override
     public void setSpec(KafkaUserSpec spec) {
         this.spec = spec;
     }
@@ -141,6 +148,7 @@ public class KafkaUser extends CustomResource implements UnknownPropertyPreservi
         return status;
     }
 
+    @Override
     public void setStatus(KafkaUserStatus status) {
         this.status = status;
     }
@@ -153,7 +161,7 @@ public class KafkaUser extends CustomResource implements UnknownPropertyPreservi
     @Override
     public void setAdditionalProperty(String name, Object value) {
         if (this.additionalProperties == null) {
-            this.additionalProperties = new HashMap<>();
+            this.additionalProperties = new HashMap<>(1);
         }
         this.additionalProperties.put(name, value);
     }

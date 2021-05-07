@@ -31,11 +31,10 @@ import io.fabric8.openshift.api.model.TagReferencePolicyBuilder;
 import io.strimzi.api.kafka.model.KafkaConnectS2I;
 import io.strimzi.api.kafka.model.KafkaConnectS2IResources;
 import io.strimzi.api.kafka.model.KafkaConnectS2ISpec;
+import io.strimzi.operator.common.Util;
 
 import java.util.List;
 import java.util.Map;
-
-import static io.strimzi.operator.cluster.model.ModelUtils.createHttpProbe;
 
 public class KafkaConnectS2ICluster extends KafkaConnectCluster {
 
@@ -49,15 +48,21 @@ public class KafkaConnectS2ICluster extends KafkaConnectCluster {
     /**
      * Constructor
      *
-     * @param resource Kubernetes/OpenShift resource with metadata containing the namespace and cluster name
+     * @param resource Kubernetes resource with metadata containing the namespace and cluster name
      */
     private KafkaConnectS2ICluster(HasMetadata resource) {
         super(resource, APPLICATION_NAME);
     }
 
+    // Deprecation is suppressed because of KafkaConnectS2I
+    @SuppressWarnings("deprecation")
     public static KafkaConnectS2ICluster fromCrd(KafkaConnectS2I kafkaConnectS2I, KafkaVersion.Lookup versions) {
         KafkaConnectS2ISpec spec = kafkaConnectS2I.getSpec();
         KafkaConnectS2ICluster cluster = fromSpec(spec, versions, new KafkaConnectS2ICluster(kafkaConnectS2I));
+
+        if (spec.getBuild() != null)  {
+            throw new InvalidResourceException(".spec.build can be used only with KafkaConnect and is not supported with KafkaConnectS2I.");
+        }
 
         cluster.setOwnerReference(kafkaConnectS2I);
         cluster.setInsecureSourceRepository(spec.isInsecureSourceRepository());
@@ -83,9 +88,9 @@ public class KafkaConnectS2ICluster extends KafkaConnectCluster {
                 .withEnv(getEnvVars())
                 .withCommand("/opt/kafka/s2i/run")
                 .withPorts(getContainerPortList())
-                .withLivenessProbe(createHttpProbe(livenessPath, REST_API_PORT_NAME, livenessProbeOptions))
-                .withReadinessProbe(createHttpProbe(readinessPath, REST_API_PORT_NAME, readinessProbeOptions))
-                .withVolumeMounts(getVolumeMounts())
+                .withLivenessProbe(ProbeGenerator.httpProbe(livenessProbeOptions, livenessPath, REST_API_PORT_NAME))
+                .withReadinessProbe(ProbeGenerator.httpProbe(readinessProbeOptions, readinessPath, REST_API_PORT_NAME))
+                .withVolumeMounts(getVolumeMounts(true))
                 .withResources(getResources())
                 .withImagePullPolicy(determineImagePullPolicy(imagePullPolicy, image))
                 .withSecurityContext(templateContainerSecurityContext)
@@ -107,19 +112,27 @@ public class KafkaConnectS2ICluster extends KafkaConnectCluster {
                 .endImageChangeParams()
                 .build();
 
-        DeploymentStrategy updateStrategy = new DeploymentStrategyBuilder()
-                .withType("Rolling")
-                .withNewRollingParams()
+        DeploymentStrategy updateStrategy;
+
+        if (templateDeploymentStrategy == io.strimzi.api.kafka.model.template.DeploymentStrategy.ROLLING_UPDATE) {
+            updateStrategy = new DeploymentStrategyBuilder()
+                    .withType("Rolling")
+                    .withNewRollingParams()
                     .withMaxSurge(new IntOrString(1))
                     .withMaxUnavailable(new IntOrString(0))
-                .endRollingParams()
-                .build();
+                    .endRollingParams()
+                    .build();
+        } else {
+            updateStrategy = new DeploymentStrategyBuilder()
+                    .withType("Recreate")
+                    .build();
+        }
 
         DeploymentConfig dc = new DeploymentConfigBuilder()
                 .withNewMetadata()
                     .withName(name)
                     .withLabels(getLabelsWithStrimziName(name, templateDeploymentLabels).toMap())
-                    .withAnnotations(mergeLabelsOrAnnotations(null, templateDeploymentAnnotations))
+                    .withAnnotations(Util.mergeLabelsOrAnnotations(null, templateDeploymentAnnotations))
                     .withNamespace(namespace)
                     .withOwnerReferences(createOwnerReference())
                 .endMetadata()
@@ -128,12 +141,13 @@ public class KafkaConnectS2ICluster extends KafkaConnectCluster {
                     .withSelector(getSelectorLabels().toMap())
                     .withNewTemplate()
                         .withNewMetadata()
-                            .withAnnotations(mergeLabelsOrAnnotations(annotations, templatePodAnnotations))
+                            .withAnnotations(Util.mergeLabelsOrAnnotations(annotations, templatePodAnnotations))
                             .withLabels(getLabelsWithStrimziName(name, templatePodLabels).toMap())
                         .endMetadata()
                         .withNewSpec()
+                            .withEnableServiceLinks(templatePodEnableServiceLinks)
                             .withContainers(container)
-                            .withVolumes(getVolumes(isOpenShift))
+                            .withVolumes(getVolumes(isOpenShift, true))
                             .withTolerations(getTolerations())
                             .withAffinity(getMergedAffinity())
                             .withTerminationGracePeriodSeconds(Long.valueOf(templateTerminationGracePeriodSeconds))
@@ -141,6 +155,8 @@ public class KafkaConnectS2ICluster extends KafkaConnectCluster {
                             .withSecurityContext(templateSecurityContext)
                             .withPriorityClassName(templatePodPriorityClassName)
                             .withSchedulerName(templatePodSchedulerName)
+                            .withHostAliases(templatePodHostAliases)
+                            .withTopologySpreadConstraints(templatePodTopologySpreadConstraints)
                         .endSpec()
                     .endTemplate()
                     .withTriggers(configChangeTrigger, imageChangeTrigger)

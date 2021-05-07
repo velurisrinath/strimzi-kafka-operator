@@ -50,7 +50,8 @@ public interface Operator {
      * @param handler Handler called on completion.
      */
     default void reconcileAll(String trigger, String namespace, Handler<AsyncResult<Void>> handler) {
-        allResourceNames(namespace).setHandler(ar -> {
+        allResourceNames(namespace).onComplete(ar -> {
+            getPausedResourceCounter().set(0);
             if (ar.succeeded()) {
                 reconcileThese(trigger, ar.result(), handler);
                 getPeriodicReconciliationsCounter().increment();
@@ -69,7 +70,7 @@ public interface Operator {
                 Reconciliation reconciliation = new Reconciliation(trigger, kind(), resourceRef.getNamespace(), resourceRef.getName());
                 futures.add(reconcile(reconciliation));
             }
-            CompositeFuture.join(futures).map((Void) null).setHandler(handler);
+            CompositeFuture.join(futures).map((Void) null).onComplete(handler);
         } else {
             getResourceCounter().set(0);
             handler.handle(Future.succeededFuture());
@@ -96,4 +97,6 @@ public interface Operator {
     Counter getPeriodicReconciliationsCounter();
 
     AtomicInteger getResourceCounter();
+
+    AtomicInteger getPausedResourceCounter();
 }

@@ -1,16 +1,17 @@
 # Maven build targets
-**/target/*
+target/
 
 # Maven release files
 *.releaseBackup
 release.properties
 
 # Eclipse specific
-**/.project
-**/.settings/*
-**/.prefs
-**/.classpath
-/target/
+.project
+.settings/
+.prefs
+.classpath
+.apt_generated/
+.apt_generated_tests/
 
 # IntelliJ IDEA specific
 .idea/
@@ -25,11 +26,13 @@ velocity.log
 
 # Generated docs
 documentation/html/**
+documentation/pdf/**
 documentation/htmlnoheader/**
 documentation/**/build/**
 master.html
 
-helm-charts/strimzi-kafka-operator-*.*.*.tgz
+helm-charts/helm3/strimzi-kafka-operator-*.*.*.tgz
+packaging/helm-charts/helm3/strimzi-kafka-operator-*.*.*.tgz
 
 docker-images/kafka/.*.tmp
 docker-images/kafka/tmp/**
@@ -48,3 +51,9 @@ systemtest/my-plugins/
 
 # Hacking directory with different script utilities and more complex YAML examples used by developers for development and testing
 /hacking/
+
+# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+hs_err_pid*
+
+# Cluster operator config models
+**/cluster-operator/src/main/resources/kafka-*-config-model.json

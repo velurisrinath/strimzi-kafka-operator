@@ -9,13 +9,13 @@ This procedure shows how to deploy a Kafka MirrorMaker cluster to your Kubernete
 
 The deployment uses a YAML file to provide the specification to create a `KafkaMirrorMaker` or `KafkaMirrorMaker2` resource depending on the version of MirrorMaker deployed.
 
-In this procedure, we use the example files provided with {ProductName}:
+In this procedure, we use the example files provided with Strimzi:
 
-* `examples/kafka-connect/kafka-mirror-maker.yaml`
-* `examples/kafka-connect/kafka-mirror-maker2.yaml`
+* `examples/mirror-maker/kafka-mirror-maker.yaml`
+* `examples/mirror-maker/kafka-mirror-maker-2.yaml`
 
 For information about configuring `KafkaMirrorMaker` or `KafkaMirrorMaker2` resources,
-see link:{BookURLUsing}#assembly-deployment-configuration-kafka-mirror-maker-str[Kafka MirrorMaker configuration^].
+see link:{BookURLUsing}#assembly-deployment-configuration-kafka-mirror-maker-str[Kafka MirrorMaker cluster configuration^] in the _Using Strimzi_ guide.
 
 .Prerequisites
 
@@ -29,14 +29,14 @@ For MirrorMaker:
 +
 [source,shell,subs="attributes+"]
 ----
-kubectl apply -f examples/kafka-mirror-maker/kafka-mirror-maker.yaml
+kubectl apply -f examples/mirror-maker/kafka-mirror-maker.yaml
 ----
 +
 For MirrorMaker 2.0:
 +
 [source,shell,subs="attributes+"]
 ----
-kubectl apply -f examples/kafka-mirror-maker-2/kafka-mirror-maker-2.yaml
+kubectl apply -f examples/mirror-maker/kafka-mirror-maker-2.yaml
 ----
 
 . Verify that MirrorMaker was successfully deployed:

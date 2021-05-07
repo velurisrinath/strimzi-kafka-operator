@@ -56,10 +56,10 @@ public class ListenerStatus implements UnknownPropertyPreserving, Serializable {
 
     public void setAddresses(List<ListenerAddress> addresses) {
         this.addresses = addresses;
-        if ((addresses == null) || addresses.isEmpty()) {
+        if (addresses == null || addresses.isEmpty()) {
             bootstrapServers = null;
         } else {
-            bootstrapServers = addresses.stream().map(a -> a.getHost() + ":" + a.getPort()).collect(Collectors.joining(","));
+            bootstrapServers = addresses.stream().map(a -> a.getHost() + ":" + a.getPort()).distinct().collect(Collectors.joining(","));
         }
     }
 
@@ -87,7 +87,7 @@ public class ListenerStatus implements UnknownPropertyPreserving, Serializable {
     @Override
     public void setAdditionalProperty(String name, Object value) {
         if (this.additionalProperties == null) {
-            this.additionalProperties = new HashMap<>();
+            this.additionalProperties = new HashMap<>(1);
         }
         this.additionalProperties.put(name, value);
     }

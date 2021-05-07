@@ -9,11 +9,14 @@ import io.fabric8.kubernetes.api.model.NodeAddress;
 import io.fabric8.kubernetes.api.model.NodeBuilder;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodBuilder;
+import io.fabric8.kubernetes.api.model.Secret;
 import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.KafkaBuilder;
+import io.strimzi.api.kafka.model.KafkaResources;
 import io.strimzi.api.kafka.model.listener.NodeAddressType;
-import io.strimzi.api.kafka.model.listener.NodePortListenerBrokerOverride;
-import io.strimzi.api.kafka.model.listener.NodePortListenerBrokerOverrideBuilder;
+import io.strimzi.api.kafka.model.listener.arraylistener.GenericKafkaListenerConfigurationBroker;
+import io.strimzi.api.kafka.model.listener.arraylistener.GenericKafkaListenerConfigurationBrokerBuilder;
+import io.strimzi.api.kafka.model.listener.arraylistener.KafkaListenerType;
 import io.strimzi.api.kafka.model.status.ConditionBuilder;
 import io.strimzi.api.kafka.model.status.KafkaStatus;
 import io.strimzi.api.kafka.model.status.ListenerAddress;
@@ -21,6 +24,7 @@ import io.strimzi.api.kafka.model.status.ListenerAddressBuilder;
 import io.strimzi.api.kafka.model.status.ListenerStatus;
 import io.strimzi.api.kafka.model.status.ListenerStatusBuilder;
 import io.strimzi.certs.CertManager;
+import io.strimzi.operator.cluster.ClusterOperator;
 import io.strimzi.operator.cluster.ClusterOperatorConfig;
 import io.strimzi.operator.PlatformFeaturesAvailability;
 import io.strimzi.operator.cluster.KafkaVersionTestUtils;
@@ -28,9 +32,9 @@ import io.strimzi.operator.cluster.ResourceUtils;
 import io.strimzi.operator.cluster.model.KafkaCluster;
 import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.KubernetesVersion;
-import io.strimzi.operator.cluster.model.ModelUtils;
 import io.strimzi.operator.cluster.operator.resource.KafkaSetOperator;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
+import io.strimzi.operator.common.MetricsAndLogging;
 import io.strimzi.operator.common.PasswordGenerator;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.Labels;
@@ -39,6 +43,9 @@ import io.strimzi.operator.common.operator.resource.ConfigMapOperator;
 import io.strimzi.operator.common.operator.resource.CrdOperator;
 import io.strimzi.operator.common.operator.resource.NodeOperator;
 import io.strimzi.operator.common.operator.resource.PodOperator;
+import io.strimzi.operator.common.operator.resource.SecretOperator;
+import io.strimzi.operator.common.operator.resource.StatusUtils;
+import io.strimzi.test.annotations.ParallelTest;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.Checkpoint;
@@ -46,7 +53,6 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 
@@ -55,7 +61,9 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.List;
 
+import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
+import static java.util.Collections.singletonMap;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
@@ -64,9 +72,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
+@SuppressWarnings({"checkstyle:ClassFanOutComplexity", "checkstyle:ClassDataAbstractionCoupling"})
 @ExtendWith(VertxExtension.class)
 public class KafkaStatusTest {
-    private final KubernetesVersion kubernetesVersion = KubernetesVersion.V1_11;
+    private final KubernetesVersion kubernetesVersion = KubernetesVersion.V1_18;
     private final MockCertManager certManager = new MockCertManager();
     private final PasswordGenerator passwordGenerator = new PasswordGenerator(10, "a", "a");
     private final ClusterOperatorConfig config = ResourceUtils.dummyClusterOperatorConfig(VERSIONS);
@@ -96,8 +105,12 @@ public class KafkaStatusTest {
                     .withNewKafka()
                         .withReplicas(3)
                         .withNewListeners()
-                            .withNewPlain()
-                            .endPlain()
+                            .addNewGenericKafkaListener()
+                                .withName("plain")
+                                .withPort(9092)
+                                .withType(KafkaListenerType.INTERNAL)
+                                .withTls(false)
+                            .endGenericKafkaListener()
                         .endListeners()
                         .withNewEphemeralStorage()
                         .endEphemeralStorage()
@@ -111,7 +124,7 @@ public class KafkaStatusTest {
                 .withNewStatus()
                     .withObservedGeneration(1L)
                     .withConditions(new ConditionBuilder()
-                            .withNewLastTransitionTime(ModelUtils.formatTimestamp(new SimpleDateFormat("yyyy-MM-dd hh:mm:ss").parse("2011-01-01 00:00:00")))
+                            .withNewLastTransitionTime(StatusUtils.iso8601(new SimpleDateFormat("yyyy-MM-dd hh:mm:ss").parse("2011-01-01 00:00:00")))
                             .withNewType("NotReady")
                             .withNewStatus("True")
                             .build())
@@ -119,7 +132,7 @@ public class KafkaStatusTest {
                 .build();
     }
 
-    @Test
+    @ParallelTest
     public void testStatusAfterSuccessfulReconciliationWithPreviousFailure(VertxTestContext context) throws ParseException {
         Kafka kafka = getKafkaCrd();
         ResourceOperatorSupplier supplier = ResourceUtils.supplierWithMocks(false);
@@ -128,6 +141,7 @@ public class KafkaStatusTest {
         CrdOperator mockKafkaOps = supplier.kafkaOperator;
 
         when(mockKafkaOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(getKafkaCrd()));
+        when(mockKafkaOps.get(eq(namespace), eq(clusterName))).thenReturn(kafka);
 
         ArgumentCaptor<Kafka> kafkaCaptor = ArgumentCaptor.forClass(Kafka.class);
         when(mockKafkaOps.updateStatusAsync(kafkaCaptor.capture())).thenReturn(Future.succeededFuture());
@@ -139,7 +153,7 @@ public class KafkaStatusTest {
                 config);
 
         Checkpoint async = context.checkpoint();
-        kao.createOrUpdate(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName), kafka).setHandler(res -> {
+        kao.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName)).onComplete(res -> {
             assertThat(res.succeeded(), is(true));
 
             assertThat(kafkaCaptor.getValue(), is(notNullValue()));
@@ -149,11 +163,11 @@ public class KafkaStatusTest {
             assertThat(status.getListeners().size(), is(2));
             assertThat(status.getListeners().get(0).getType(), is("plain"));
             assertThat(status.getListeners().get(0).getAddresses().get(0).getHost(), is("my-service.my-namespace.svc"));
-            assertThat(status.getListeners().get(0).getAddresses().get(0).getPort(), is(new Integer(9092)));
+            assertThat(status.getListeners().get(0).getAddresses().get(0).getPort(), is(Integer.valueOf(9092)));
             assertThat(status.getListeners().get(0).getBootstrapServers(), is("my-service.my-namespace.svc:9092"));
             assertThat(status.getListeners().get(1).getType(), is("external"));
             assertThat(status.getListeners().get(1).getAddresses().get(0).getHost(), is("my-route-address.domain.tld"));
-            assertThat(status.getListeners().get(1).getAddresses().get(0).getPort(), is(new Integer(443)));
+            assertThat(status.getListeners().get(1).getAddresses().get(0).getPort(), is(Integer.valueOf(443)));
             assertThat(status.getListeners().get(1).getBootstrapServers(), is("my-route-address.domain.tld:443"));
 
             assertThat(status.getConditions().size(), is(1));
@@ -166,7 +180,44 @@ public class KafkaStatusTest {
         });
     }
 
-    @Test
+    @ParallelTest
+    public void testPauseReconciliationsStatus(VertxTestContext context) throws ParseException {
+        Kafka kafka = getKafkaCrd();
+        kafka.getMetadata().setAnnotations(singletonMap("strimzi.io/pause-reconciliation", Boolean.toString(true)));
+        ResourceOperatorSupplier supplier = ResourceUtils.supplierWithMocks(false);
+
+        // Mock the Kafka Operator
+        CrdOperator mockKafkaOps = supplier.kafkaOperator;
+
+        when(mockKafkaOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(getKafkaCrd()));
+        when(mockKafkaOps.get(eq(namespace), eq(clusterName))).thenReturn(kafka);
+
+        ArgumentCaptor<Kafka> kafkaCaptor = ArgumentCaptor.forClass(Kafka.class);
+        when(mockKafkaOps.updateStatusAsync(kafkaCaptor.capture())).thenReturn(Future.succeededFuture());
+
+        MockWorkingKafkaAssemblyOperator kao = new MockWorkingKafkaAssemblyOperator(vertx, new PlatformFeaturesAvailability(false, kubernetesVersion),
+                certManager,
+                passwordGenerator,
+                supplier,
+                config);
+
+        Checkpoint async = context.checkpoint();
+        kao.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName)).onComplete(res -> {
+            assertThat(res.succeeded(), is(true));
+
+            assertThat(kafkaCaptor.getValue(), is(notNullValue()));
+            assertThat(kafkaCaptor.getValue().getStatus(), is(notNullValue()));
+            KafkaStatus status = kafkaCaptor.getValue().getStatus();
+
+            assertThat(status.getConditions().size(), is(1));
+            assertThat(status.getConditions().get(0).getStatus(), is("True"));
+            assertThat(status.getConditions().get(0).getType(), is("ReconciliationPaused"));
+            assertThat(status.getObservedGeneration(), is(1L));
+            async.flag();
+        });
+    }
+
+    @ParallelTest
     public void testStatusAfterSuccessfulReconciliationWithPreviousSuccess(VertxTestContext context) throws ParseException {
         Kafka kafka = getKafkaCrd();
         ResourceOperatorSupplier supplier = ResourceUtils.supplierWithMocks(false);
@@ -209,7 +260,7 @@ public class KafkaStatusTest {
                 config);
 
         Checkpoint async = context.checkpoint();
-        kao.createOrUpdate(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName), kafka).setHandler(res -> {
+        kao.createOrUpdate(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName), kafka).onComplete(res -> {
             assertThat(res.succeeded(), is(true));
             // The status should not change => we test that updateStatusAsync was not called
             assertThat(kafkaCaptor.getAllValues().size(), is(0));
@@ -218,12 +269,12 @@ public class KafkaStatusTest {
         });
     }
 
-    @Test
+    @ParallelTest
     public void testStatusAfterFailedReconciliationWithPreviousFailure(VertxTestContext context) throws ParseException {
         testStatusAfterFailedReconciliationWithPreviousFailure(context, new RuntimeException("Something went wrong"));
     }
 
-    @Test
+    @ParallelTest
     public void testStatusAfterFailedReconciliationWithPreviousFailure_NPE(VertxTestContext context) throws ParseException {
         testStatusAfterFailedReconciliationWithPreviousFailure(context, new NullPointerException());
     }
@@ -236,6 +287,7 @@ public class KafkaStatusTest {
         CrdOperator mockKafkaOps = supplier.kafkaOperator;
 
         when(mockKafkaOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(getKafkaCrd()));
+        when(mockKafkaOps.get(eq(namespace), eq(clusterName))).thenReturn(kafka);
 
         ArgumentCaptor<Kafka> kafkaCaptor = ArgumentCaptor.forClass(Kafka.class);
         when(mockKafkaOps.updateStatusAsync(kafkaCaptor.capture())).thenReturn(Future.succeededFuture());
@@ -249,7 +301,7 @@ public class KafkaStatusTest {
                 config);
 
         Checkpoint async = context.checkpoint();
-        kao.createOrUpdate(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName), kafka).setHandler(res -> {
+        kao.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName)).onComplete(res -> {
             assertThat(res.succeeded(), is(false));
 
             assertThat(kafkaCaptor.getValue(), is(notNullValue()));
@@ -259,7 +311,7 @@ public class KafkaStatusTest {
             assertThat(status.getListeners().size(), is(1));
             assertThat(status.getListeners().get(0).getType(), is("plain"));
             assertThat(status.getListeners().get(0).getAddresses().get(0).getHost(), is("my-service.my-namespace.svc"));
-            assertThat(status.getListeners().get(0).getAddresses().get(0).getPort(), is(new Integer(9092)));
+            assertThat(status.getListeners().get(0).getAddresses().get(0).getPort(), is(Integer.valueOf(9092)));
             assertThat(status.getListeners().get(0).getBootstrapServers(), is("my-service.my-namespace.svc:9092"));
 
             assertThat(status.getConditions().size(), is(1));
@@ -274,7 +326,7 @@ public class KafkaStatusTest {
         });
     }
 
-    @Test
+    @ParallelTest
     public void testStatusAfterFailedReconciliationWithPreviousSuccess(VertxTestContext context) throws ParseException {
         Kafka kafka = getKafkaCrd();
         ResourceOperatorSupplier supplier = ResourceUtils.supplierWithMocks(false);
@@ -306,6 +358,7 @@ public class KafkaStatusTest {
                 .build();
 
         when(mockKafkaOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(readyKafka));
+        when(mockKafkaOps.get(eq(namespace), eq(clusterName))).thenReturn(readyKafka);
 
         ArgumentCaptor<Kafka> kafkaCaptor = ArgumentCaptor.forClass(Kafka.class);
         when(mockKafkaOps.updateStatusAsync(kafkaCaptor.capture())).thenReturn(Future.succeededFuture());
@@ -319,7 +372,7 @@ public class KafkaStatusTest {
                 config);
 
         Checkpoint async = context.checkpoint();
-        kao.createOrUpdate(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName), kafka).setHandler(res -> {
+        kao.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName)).onComplete(res -> {
             assertThat(res.succeeded(), is(false));
 
             assertThat(kafkaCaptor.getValue(), is(notNullValue()));
@@ -329,7 +382,7 @@ public class KafkaStatusTest {
             assertThat(status.getListeners().size(), is(1));
             assertThat(status.getListeners().get(0).getType(), is("plain"));
             assertThat(status.getListeners().get(0).getAddresses().get(0).getHost(), is("my-service.my-namespace.svc"));
-            assertThat(status.getListeners().get(0).getAddresses().get(0).getPort(), is(new Integer(9092)));
+            assertThat(status.getListeners().get(0).getAddresses().get(0).getPort(), is(Integer.valueOf(9092)));
             assertThat(status.getListeners().get(0).getBootstrapServers(), is("my-service.my-namespace.svc:9092"));
 
             assertThat(status.getConditions().size(), is(1));
@@ -402,14 +455,18 @@ public class KafkaStatusTest {
         return nodes;
     }
 
-    @Test
+    @ParallelTest
     public void testKafkaListenerNodePortAddressInStatus(VertxTestContext context) throws ParseException {
         Kafka kafka = new KafkaBuilder(getKafkaCrd())
                 .editOrNewSpec()
                     .editOrNewKafka()
-                        .editOrNewListeners()
-                            .withNewKafkaListenerExternalNodePort()
-                            .endKafkaListenerExternalNodePort()
+                        .withNewListeners()
+                            .addNewGenericKafkaListener()
+                                .withName("external")
+                                .withPort(9094)
+                                .withType(KafkaListenerType.NODEPORT)
+                                .withTls(true)
+                            .endGenericKafkaListener()
                         .endListeners()
                     .endKafka()
                 .endSpec()
@@ -421,6 +478,7 @@ public class KafkaStatusTest {
         // Mock the CRD Operator for Kafka resources
         CrdOperator mockKafkaOps = supplier.kafkaOperator;
         when(mockKafkaOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafka));
+        when(mockKafkaOps.get(eq(namespace), eq(clusterName))).thenReturn(kafka);
 
         ArgumentCaptor<Kafka> kafkaCaptor = ArgumentCaptor.forClass(Kafka.class);
         when(mockKafkaOps.updateStatusAsync(kafkaCaptor.capture())).thenReturn(Future.succeededFuture());
@@ -431,7 +489,7 @@ public class KafkaStatusTest {
 
         // Mock the ConfigMapOperator
         ConfigMapOperator mockCmOps = supplier.configMapOperations;
-        when(mockCmOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafkaCluster.generateMetricsAndLogConfigMap(null)));
+        when(mockCmOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafkaCluster.generateMetricsAndLogConfigMap(new MetricsAndLogging(null, null))));
 
         // Mock Pods Operator
         Pod pod0 = new PodBuilder()
@@ -481,7 +539,7 @@ public class KafkaStatusTest {
                 config);
 
         Checkpoint async = context.checkpoint();
-        kao.createOrUpdate(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName), kafka).setHandler(res -> {
+        kao.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName)).onComplete(res -> {
             assertThat(res.succeeded(), is(true));
 
             assertThat(kafkaCaptor.getValue(), is(notNullValue()));
@@ -503,14 +561,14 @@ public class KafkaStatusTest {
         });
     }
 
-    @Test
+    @ParallelTest
     public void testKafkaListenerNodePortAddressInStatusWithOverrides(VertxTestContext context) throws ParseException {
-        NodePortListenerBrokerOverride broker0 = new NodePortListenerBrokerOverrideBuilder()
+        GenericKafkaListenerConfigurationBroker broker0 = new GenericKafkaListenerConfigurationBrokerBuilder()
                 .withBroker(0)
                 .withAdvertisedHost("my-address-0")
                 .build();
 
-        NodePortListenerBrokerOverride broker1 = new NodePortListenerBrokerOverrideBuilder()
+        GenericKafkaListenerConfigurationBroker broker1 = new GenericKafkaListenerConfigurationBrokerBuilder()
                 .withBroker(1)
                 .withAdvertisedHost("my-address-1")
                 .build();
@@ -518,12 +576,16 @@ public class KafkaStatusTest {
         Kafka kafka = new KafkaBuilder(getKafkaCrd())
                 .editOrNewSpec()
                     .editOrNewKafka()
-                        .editOrNewListeners()
-                            .withNewKafkaListenerExternalNodePort()
-                                .withNewOverrides()
+                        .withNewListeners()
+                            .addNewGenericKafkaListener()
+                                .withName("external")
+                                .withPort(9094)
+                                .withType(KafkaListenerType.NODEPORT)
+                                .withTls(true)
+                                .withNewConfiguration()
                                     .withBrokers(broker0, broker1)
-                                .endOverrides()
-                            .endKafkaListenerExternalNodePort()
+                                .endConfiguration()
+                            .endGenericKafkaListener()
                         .endListeners()
                     .endKafka()
                 .endSpec()
@@ -535,6 +597,7 @@ public class KafkaStatusTest {
         // Mock the CRD Operator for Kafka resources
         CrdOperator mockKafkaOps = supplier.kafkaOperator;
         when(mockKafkaOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafka));
+        when(mockKafkaOps.get(eq(namespace), eq(clusterName))).thenReturn(kafka);
 
         ArgumentCaptor<Kafka> kafkaCaptor = ArgumentCaptor.forClass(Kafka.class);
         when(mockKafkaOps.updateStatusAsync(kafkaCaptor.capture())).thenReturn(Future.succeededFuture());
@@ -545,7 +608,7 @@ public class KafkaStatusTest {
 
         // Mock the ConfigMapOperator
         ConfigMapOperator mockCmOps = supplier.configMapOperations;
-        when(mockCmOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafkaCluster.generateMetricsAndLogConfigMap(null)));
+        when(mockCmOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafkaCluster.generateMetricsAndLogConfigMap(new MetricsAndLogging(null, null))));
 
         // Mock Pods Operator
         Pod pod0 = new PodBuilder()
@@ -595,7 +658,7 @@ public class KafkaStatusTest {
                 config);
 
         Checkpoint async = context.checkpoint();
-        kao.createOrUpdate(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName), kafka).setHandler(res -> {
+        kao.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName)).onComplete(res -> {
             assertThat(res.succeeded(), is(true));
 
             assertThat(kafkaCaptor.getValue(), is(notNullValue()));
@@ -617,17 +680,21 @@ public class KafkaStatusTest {
         });
     }
 
-    @Test
+    @ParallelTest
     public void testKafkaListenerNodePortAddressWithPreferred(VertxTestContext context) throws ParseException {
         Kafka kafka = new KafkaBuilder(getKafkaCrd())
                 .editOrNewSpec()
                     .editOrNewKafka()
-                        .editOrNewListeners()
-                            .withNewKafkaListenerExternalNodePort()
+                        .withNewListeners()
+                            .addNewGenericKafkaListener()
+                                .withName("external")
+                                .withPort(9094)
+                                .withType(KafkaListenerType.NODEPORT)
+                                .withTls(true)
                                 .withNewConfiguration()
-                                    .withPreferredAddressType(NodeAddressType.INTERNAL_DNS)
+                                    .withPreferredNodePortAddressType(NodeAddressType.INTERNAL_DNS)
                                 .endConfiguration()
-                            .endKafkaListenerExternalNodePort()
+                            .endGenericKafkaListener()
                         .endListeners()
                     .endKafka()
                 .endSpec()
@@ -639,6 +706,7 @@ public class KafkaStatusTest {
         // Mock the CRD Operator for Kafka resources
         CrdOperator mockKafkaOps = supplier.kafkaOperator;
         when(mockKafkaOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafka));
+        when(mockKafkaOps.get(eq(namespace), eq(clusterName))).thenReturn(kafka);
 
         ArgumentCaptor<Kafka> kafkaCaptor = ArgumentCaptor.forClass(Kafka.class);
         when(mockKafkaOps.updateStatusAsync(kafkaCaptor.capture())).thenReturn(Future.succeededFuture());
@@ -649,7 +717,7 @@ public class KafkaStatusTest {
 
         // Mock the ConfigMapOperator
         ConfigMapOperator mockCmOps = supplier.configMapOperations;
-        when(mockCmOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafkaCluster.generateMetricsAndLogConfigMap(null)));
+        when(mockCmOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafkaCluster.generateMetricsAndLogConfigMap(new MetricsAndLogging(null, null))));
 
         // Mock Pods Operator
         Pod pod0 = new PodBuilder()
@@ -699,7 +767,7 @@ public class KafkaStatusTest {
                 config);
 
         Checkpoint async = context.checkpoint();
-        kao.createOrUpdate(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName), kafka).setHandler(res -> {
+        kao.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName)).onComplete(res -> {
             assertThat(res.succeeded(), is(true));
 
             assertThat(kafkaCaptor.getValue(), is(notNullValue()));
@@ -721,14 +789,18 @@ public class KafkaStatusTest {
         });
     }
 
-    @Test
+    @ParallelTest
     public void testKafkaListenerNodePortAddressSameNode(VertxTestContext context) throws ParseException {
         Kafka kafka = new KafkaBuilder(getKafkaCrd())
                 .editOrNewSpec()
                     .editOrNewKafka()
-                        .editOrNewListeners()
-                            .withNewKafkaListenerExternalNodePort()
-                            .endKafkaListenerExternalNodePort()
+                        .withNewListeners()
+                            .addNewGenericKafkaListener()
+                                .withName("external")
+                                .withPort(9094)
+                                .withType(KafkaListenerType.NODEPORT)
+                                .withTls(true)
+                            .endGenericKafkaListener()
                         .endListeners()
                     .endKafka()
                 .endSpec()
@@ -740,6 +812,7 @@ public class KafkaStatusTest {
         // Mock the CRD Operator for Kafka resources
         CrdOperator mockKafkaOps = supplier.kafkaOperator;
         when(mockKafkaOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafka));
+        when(mockKafkaOps.get(eq(namespace), eq(clusterName))).thenReturn(kafka);
 
         ArgumentCaptor<Kafka> kafkaCaptor = ArgumentCaptor.forClass(Kafka.class);
         when(mockKafkaOps.updateStatusAsync(kafkaCaptor.capture())).thenReturn(Future.succeededFuture());
@@ -750,7 +823,7 @@ public class KafkaStatusTest {
 
         // Mock the ConfigMapOperator
         ConfigMapOperator mockCmOps = supplier.configMapOperations;
-        when(mockCmOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafkaCluster.generateMetricsAndLogConfigMap(null)));
+        when(mockCmOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafkaCluster.generateMetricsAndLogConfigMap(new MetricsAndLogging(null, null))));
 
         // Mock Pods Operator
         Pod pod0 = new PodBuilder()
@@ -800,7 +873,7 @@ public class KafkaStatusTest {
                 config);
 
         Checkpoint async = context.checkpoint();
-        kao.createOrUpdate(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName), kafka).setHandler(res -> {
+        kao.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName)).onComplete(res -> {
             assertThat(res.succeeded(), is(true));
 
             assertThat(kafkaCaptor.getValue(), is(notNullValue()));
@@ -820,15 +893,19 @@ public class KafkaStatusTest {
         });
     }
 
-    @Test
+    @ParallelTest
     public void testKafkaListenerNodePortAddressMissingNodes(VertxTestContext context) throws ParseException {
         Kafka kafka = new KafkaBuilder(getKafkaCrd())
                 .editOrNewSpec()
                     .editOrNewKafka()
                         .withReplicas(1)
-                        .editOrNewListeners()
-                            .withNewKafkaListenerExternalNodePort()
-                            .endKafkaListenerExternalNodePort()
+                        .withNewListeners()
+                            .addNewGenericKafkaListener()
+                                .withName("external")
+                                .withPort(9094)
+                                .withType(KafkaListenerType.NODEPORT)
+                                .withTls(true)
+                            .endGenericKafkaListener()
                         .endListeners()
                     .endKafka()
                 .endSpec()
@@ -840,6 +917,7 @@ public class KafkaStatusTest {
         // Mock the CRD Operator for Kafka resources
         CrdOperator mockKafkaOps = supplier.kafkaOperator;
         when(mockKafkaOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafka));
+        when(mockKafkaOps.get(eq(namespace), eq(clusterName))).thenReturn(kafka);
 
         ArgumentCaptor<Kafka> kafkaCaptor = ArgumentCaptor.forClass(Kafka.class);
         when(mockKafkaOps.updateStatusAsync(kafkaCaptor.capture())).thenReturn(Future.succeededFuture());
@@ -850,7 +928,7 @@ public class KafkaStatusTest {
 
         // Mock the ConfigMapOperator
         ConfigMapOperator mockCmOps = supplier.configMapOperations;
-        when(mockCmOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafkaCluster.generateMetricsAndLogConfigMap(null)));
+        when(mockCmOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafkaCluster.generateMetricsAndLogConfigMap(new MetricsAndLogging(null, null))));
 
         // Mock Pods Operator
         Pod pod0 = new PodBuilder()
@@ -880,7 +958,7 @@ public class KafkaStatusTest {
                 config);
 
         Checkpoint async = context.checkpoint();
-        kao.createOrUpdate(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName), kafka).setHandler(res -> {
+        kao.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName)).onComplete(res -> {
             assertThat(res.succeeded(), is(true));
 
             assertThat(kafkaCaptor.getValue(), is(notNullValue()));
@@ -890,14 +968,14 @@ public class KafkaStatusTest {
             assertThat(status.getListeners().size(), is(1));
             assertThat(status.getListeners().get(0).getType(), is("external"));
 
-            assertThat(status.getListeners().get(0).getAddresses(), is(nullValue()));
+            assertThat(status.getListeners().get(0).getAddresses(), is(emptyList()));
             assertThat(status.getListeners().get(0).getBootstrapServers(), is(nullValue()));
 
             async.flag();
         });
     }
 
-    @Test
+    @ParallelTest
     public void testInitialStatusOnNewResource() throws ParseException {
         Kafka kafka = getKafkaCrd();
         kafka.setStatus(null);
@@ -908,6 +986,7 @@ public class KafkaStatusTest {
         CrdOperator mockKafkaOps = supplier.kafkaOperator;
 
         when(mockKafkaOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafka));
+        when(mockKafkaOps.get(eq(namespace), eq(clusterName))).thenReturn(kafka);
 
         ArgumentCaptor<Kafka> kafkaCaptor = ArgumentCaptor.forClass(Kafka.class);
         when(mockKafkaOps.updateStatusAsync(kafkaCaptor.capture())).thenReturn(Future.succeededFuture());
@@ -918,7 +997,7 @@ public class KafkaStatusTest {
                 supplier,
                 config);
 
-        kao.createOrUpdate(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName), kafka).setHandler(res -> {
+        kao.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName)).onComplete(res -> {
             assertThat(res.succeeded(), is(true));
 
             assertThat(kafkaCaptor.getAllValues().size(), is(2));
@@ -935,7 +1014,7 @@ public class KafkaStatusTest {
         });
     }
 
-    @Test
+    @ParallelTest
     public void testInitialStatusOnOldResource() throws ParseException {
         Kafka kafka = getKafkaCrd();
 
@@ -945,6 +1024,7 @@ public class KafkaStatusTest {
         CrdOperator mockKafkaOps = supplier.kafkaOperator;
 
         when(mockKafkaOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafka));
+        when(mockKafkaOps.get(eq(namespace), eq(clusterName))).thenReturn(kafka);
 
         ArgumentCaptor<Kafka> kafkaCaptor = ArgumentCaptor.forClass(Kafka.class);
         when(mockKafkaOps.updateStatusAsync(kafkaCaptor.capture())).thenReturn(Future.succeededFuture());
@@ -955,14 +1035,56 @@ public class KafkaStatusTest {
                 supplier,
                 config);
 
-        kao.createOrUpdate(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName), kafka).setHandler(res -> {
+        kao.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName)).onComplete(res -> {
             assertThat(res.succeeded(), is(true));
 
             assertThat(kafkaCaptor.getAllValues().size(), is(1));
         });
     }
 
-    @Test
+    @ParallelTest
+    public void testKafkaClusterIdInStatus(VertxTestContext context) throws ParseException {
+        Kafka kafka = new KafkaBuilder(getKafkaCrd()).build();
+        KafkaCluster kafkaCluster = KafkaCluster.fromCrd(kafka, VERSIONS);
+
+        ResourceOperatorSupplier supplier = ResourceUtils.supplierWithMocks(false);
+
+        // Mock the CRD Operator for Kafka resources
+        CrdOperator mockKafkaOps = supplier.kafkaOperator;
+        when(mockKafkaOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafka));
+        when(mockKafkaOps.get(eq(namespace), eq(clusterName))).thenReturn(kafka);
+
+        ArgumentCaptor<Kafka> kafkaCaptor = ArgumentCaptor.forClass(Kafka.class);
+        when(mockKafkaOps.updateStatusAsync(kafkaCaptor.capture())).thenReturn(Future.succeededFuture());
+        
+        // Mock the KafkaSecretOperator
+        SecretOperator mockSecretOps = supplier.secretOperations;
+        Secret secret = new Secret();
+        when(mockSecretOps.getAsync(eq(namespace), eq(KafkaResources.clusterCaCertificateSecretName(clusterName)))).thenReturn(Future.succeededFuture(secret));
+        when(mockSecretOps.getAsync(eq(namespace), eq(ClusterOperator.secretName(clusterName)))).thenReturn(Future.succeededFuture(secret));
+        
+        MockClusterIdStatusKafkaAssemblyOperator kao = new MockClusterIdStatusKafkaAssemblyOperator(
+                vertx, new PlatformFeaturesAvailability(false, kubernetesVersion),
+                certManager,
+                passwordGenerator,
+                supplier,
+                config);
+
+        Checkpoint async = context.checkpoint();
+        kao.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName)).onComplete(res -> {
+            assertThat(res.succeeded(), is(true));
+
+            assertThat(kafkaCaptor.getValue(), is(notNullValue()));
+            assertThat(kafkaCaptor.getValue().getStatus(), is(notNullValue()));
+            KafkaStatus status = kafkaCaptor.getValue().getStatus();
+
+            assertThat(status.getClusterId(), is(notNullValue()));
+
+            async.flag();
+        });
+    }
+
+    @ParallelTest
     public void testModelWarnings(VertxTestContext context) throws ParseException {
         Kafka kafka = getKafkaCrd();
         Kafka oldKafka = new KafkaBuilder(getKafkaCrd())
@@ -981,6 +1103,7 @@ public class KafkaStatusTest {
         // Mock the CRD Operator for Kafka resources
         CrdOperator mockKafkaOps = supplier.kafkaOperator;
         when(mockKafkaOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafka));
+        when(mockKafkaOps.get(eq(namespace), eq(clusterName))).thenReturn(kafka);
 
         ArgumentCaptor<Kafka> kafkaCaptor = ArgumentCaptor.forClass(Kafka.class);
         when(mockKafkaOps.updateStatusAsync(kafkaCaptor.capture())).thenReturn(Future.succeededFuture());
@@ -991,7 +1114,11 @@ public class KafkaStatusTest {
 
         // Mock the ConfigMapOperator
         ConfigMapOperator mockCmOps = supplier.configMapOperations;
-        when(mockCmOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafkaCluster.generateMetricsAndLogConfigMap(null)));
+        when(mockCmOps.getAsync(eq(namespace), eq(clusterName))).thenReturn(Future.succeededFuture(kafkaCluster.generateMetricsAndLogConfigMap(new MetricsAndLogging(null, null))));
+
+        // Mock the PodOperator
+        PodOperator mockPodOps = supplier.podOperations;
+        when(mockPodOps.listAsync(eq(namespace), any(Labels.class))).thenReturn(Future.succeededFuture(emptyList()));
 
         MockModelWarningsStatusKafkaAssemblyOperator kao = new MockModelWarningsStatusKafkaAssemblyOperator(
                 vertx, new PlatformFeaturesAvailability(false, kubernetesVersion),
@@ -1001,8 +1128,8 @@ public class KafkaStatusTest {
                 config);
 
         Checkpoint async = context.checkpoint();
-        kao.createOrUpdate(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName), kafka)
-                .setHandler(context.succeeding(v -> context.verify(() -> {
+        kao.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, clusterName))
+                .onComplete(context.succeeding(v -> context.verify(() -> {
                     assertThat(kafkaCaptor.getValue(), is(notNullValue()));
                     assertThat(kafkaCaptor.getValue().getStatus(), is(notNullValue()));
                     KafkaStatus status = kafkaCaptor.getValue().getStatus();
@@ -1095,7 +1222,7 @@ public class KafkaStatusTest {
 
         @Override
         Future<Void> reconcile(ReconciliationState reconcileState)  {
-            reconcileState.externalBootstrapNodePort = 31234;
+            reconcileState.kafkaBootstrapNodePorts.put("external-9094", 31234);
 
             return reconcileState.getKafkaClusterDescription()
                     .compose(state -> state.kafkaNodePortExternalListenerStatus())
@@ -1116,4 +1243,17 @@ public class KafkaStatusTest {
         }
 
     }
+
+    class MockClusterIdStatusKafkaAssemblyOperator extends KafkaAssemblyOperator  {
+        public MockClusterIdStatusKafkaAssemblyOperator(Vertx vertx, PlatformFeaturesAvailability pfa, CertManager certManager, PasswordGenerator passwordGenerator, ResourceOperatorSupplier supplier, ClusterOperatorConfig config) {
+            super(vertx, pfa, certManager, passwordGenerator, supplier, config);
+        }
+
+        @Override
+        Future<Void> reconcile(ReconciliationState reconcileState)  {
+            return reconcileState.kafkaGetClusterId()
+                    .map((Void) null);
+        }
+    }
+
 }

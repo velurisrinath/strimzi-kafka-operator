@@ -4,8 +4,6 @@
  */
 package io.strimzi.operator.common.operator.resource;
 
-import io.fabric8.kubernetes.api.model.Doneable;
-import io.fabric8.kubernetes.api.model.apiextensions.CustomResourceDefinition;
 import io.fabric8.kubernetes.client.CustomResource;
 import io.fabric8.kubernetes.client.CustomResourceList;
 import io.fabric8.kubernetes.client.DefaultKubernetesClient;
@@ -31,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.util.Random;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.strimzi.test.k8s.KubeClusterResource.cmdKubeClient;
@@ -52,7 +51,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 // Methods must be be non static as they make a non-static call to getCrd()
 // to correctly setup the test environment before the tests.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-public abstract class AbstractCustomResourceOperatorIT<C extends KubernetesClient, T extends CustomResource, L extends CustomResourceList<T>, D extends Doneable<T>> {
+public abstract class AbstractCustomResourceOperatorIT<C extends KubernetesClient, T extends CustomResource, L extends CustomResourceList<T>> {
     protected static final Logger log = LogManager.getLogger(AbstractCustomResourceOperatorIT.class);
     protected static final String RESOURCE_NAME = "my-test-resource";
     protected static final Condition READY_CONDITION = new ConditionBuilder()
@@ -64,15 +63,14 @@ public abstract class AbstractCustomResourceOperatorIT<C extends KubernetesClien
     protected static KubernetesClient client;
     private static KubeClusterResource cluster;
 
-
-    protected abstract CrdOperator<C, T, L, D> operator();
-    protected abstract CustomResourceDefinition getCrd();
+    protected abstract CrdOperator<C, T, L> operator();
+    protected abstract String getCrd();
+    protected abstract String getCrdName();
     protected abstract String getNamespace();
-    protected abstract T getResource();
+    protected abstract T getResource(String name);
     protected abstract T getResourceWithModifications(T resourceInCluster);
     protected abstract T getResourceWithNewReadyStatus(T resourceInCluster);
     protected abstract void assertReady(VertxTestContext context, T modifiedCustomResource);
-
 
     @BeforeAll
     public void before() {
@@ -95,7 +93,8 @@ public abstract class AbstractCustomResourceOperatorIT<C extends KubernetesClien
         cmdKubeClient().waitForResourceCreation("Namespace", namespace);
 
         log.info("Creating CRD");
-        client.customResourceDefinitions().createOrReplace(getCrd());
+        cluster.createCustomResources(getCrd());
+        cluster.waitForCustomResourceDefinition(getCrdName());
         log.info("Created CRD");
     }
 
@@ -113,41 +112,42 @@ public abstract class AbstractCustomResourceOperatorIT<C extends KubernetesClien
 
     @Test
     public void testUpdateStatus(VertxTestContext context) {
+        String resourceName = getResourceName(RESOURCE_NAME);
         Checkpoint async = context.checkpoint();
         String namespace = getNamespace();
 
-        CrdOperator<C, T, L, D> op = operator();
+        CrdOperator<C, T, L> op = operator();
 
         log.info("Getting Kubernetes version");
         PlatformFeaturesAvailability.create(vertx, client)
-                .setHandler(context.succeeding(pfa -> context.verify(() -> {
+                .onComplete(context.succeeding(pfa -> context.verify(() -> {
                     assertThat("Kubernetes version : " + pfa.getKubernetesVersion() + " is too old",
-                            pfa.getKubernetesVersion().compareTo(KubernetesVersion.V1_11), CoreMatchers.is(not(lessThan(0))));
+                            pfa.getKubernetesVersion().compareTo(KubernetesVersion.V1_16), CoreMatchers.is(not(lessThan(0))));
                 })))
 
                 .compose(pfa -> {
                     log.info("Creating resource");
-                    return op.reconcile(namespace, RESOURCE_NAME, getResource());
+                    return op.reconcile(namespace, resourceName, getResource(resourceName));
                 })
-                .setHandler(context.succeeding())
+                .onComplete(context.succeeding())
                 .compose(rrCreated -> {
                     T newStatus = getResourceWithNewReadyStatus(rrCreated.resource());
 
                     log.info("Updating resource status");
                     return op.updateStatusAsync(newStatus);
                 })
-                .setHandler(context.succeeding())
+                .onComplete(context.succeeding())
 
-                .compose(rrModified -> op.getAsync(namespace, RESOURCE_NAME))
-                .setHandler(context.succeeding(modifiedCustomResource -> context.verify(() -> {
+                .compose(rrModified -> op.getAsync(namespace, resourceName))
+                .onComplete(context.succeeding(modifiedCustomResource -> context.verify(() -> {
                     assertReady(context, modifiedCustomResource);
                 })))
 
                 .compose(rrModified -> {
                     log.info("Deleting resource");
-                    return op.reconcile(namespace, RESOURCE_NAME, null);
+                    return op.reconcile(namespace, resourceName, null);
                 })
-                .setHandler(context.succeeding(rrDeleted ->  async.flag()));
+                .onComplete(context.succeeding(rrDeleted ->  async.flag()));
     }
 
 
@@ -158,79 +158,81 @@ public abstract class AbstractCustomResourceOperatorIT<C extends KubernetesClien
      */
     @Test
     public void testUpdateStatusAfterResourceDeletedThrowsKubernetesClientException(VertxTestContext context) {
+        String resourceName = getResourceName(RESOURCE_NAME);
         Checkpoint async = context.checkpoint();
         String namespace = getNamespace();
 
-        CrdOperator<C, T, L, D> op = operator();
+        CrdOperator<C, T, L> op = operator();
 
         AtomicReference<T> newStatus = new AtomicReference<>();
 
         log.info("Getting Kubernetes version");
         PlatformFeaturesAvailability.create(vertx, client)
-                .setHandler(context.succeeding(pfa -> context.verify(() -> {
+                .onComplete(context.succeeding(pfa -> context.verify(() -> {
                     assertThat("Kubernetes version : " + pfa.getKubernetesVersion() + " is too old",
-                            pfa.getKubernetesVersion().compareTo(KubernetesVersion.V1_11), CoreMatchers.is(not(lessThan(0))));
+                            pfa.getKubernetesVersion().compareTo(KubernetesVersion.V1_16), CoreMatchers.is(not(lessThan(0))));
                 })))
                 .compose(pfa -> {
                     log.info("Creating resource");
-                    return op.reconcile(namespace, RESOURCE_NAME, getResource());
+                    return op.reconcile(namespace, resourceName, getResource(resourceName));
                 })
-                .setHandler(context.succeeding())
+                .onComplete(context.succeeding())
 
                 .compose(rr -> {
                     log.info("Saving resource with status change prior to deletion");
-                    newStatus.set(getResourceWithNewReadyStatus(op.get(namespace, RESOURCE_NAME)));
+                    newStatus.set(getResourceWithNewReadyStatus(op.get(namespace, resourceName)));
                     log.info("Deleting resource");
-                    return op.reconcile(namespace, RESOURCE_NAME, null);
+                    return op.reconcile(namespace, resourceName, null);
                 })
-                .setHandler(context.succeeding())
+                .onComplete(context.succeeding())
 
                 .compose(rrDeleted -> {
                     log.info("Updating resource with new status - should fail");
                     return op.updateStatusAsync(newStatus.get());
                 })
-                .setHandler(context.failing(e -> context.verify(() -> {
+                .onComplete(context.failing(e -> context.verify(() -> {
                     assertThat(e, instanceOf(KubernetesClientException.class));
                     async.flag();
                 })));
     }
 
     /**
-     * Tests what happens when the resource is modifed while updating the status
+     * Tests what happens when the resource is modified while updating the status
      *
      * @param context
      */
     @Test
     public void testUpdateStatusAfterResourceUpdatedThrowsKubernetesClientException(VertxTestContext context) {
+        String resourceName = getResourceName(RESOURCE_NAME);
         Checkpoint async = context.checkpoint();
         String namespace = getNamespace();
 
-        CrdOperator<C, T, L, D> op = operator();
+        CrdOperator<C, T, L> op = operator();
 
         Promise updateFailed = Promise.promise();
 
         log.info("Getting Kubernetes version");
         PlatformFeaturesAvailability.create(vertx, client)
-                .setHandler(context.succeeding(pfa -> context.verify(() -> {
+                .onComplete(context.succeeding(pfa -> context.verify(() -> {
                     assertThat("Kubernetes version : " + pfa.getKubernetesVersion() + " is too old",
-                            pfa.getKubernetesVersion().compareTo(KubernetesVersion.V1_11), CoreMatchers.is(not(lessThan(0))));
+                            pfa.getKubernetesVersion().compareTo(KubernetesVersion.V1_16), CoreMatchers.is(not(lessThan(0))));
                 })))
                 .compose(pfa -> {
                     log.info("Creating resource");
-                    return op.reconcile(namespace, RESOURCE_NAME, getResource());
+                    return op.reconcile(namespace, resourceName, getResource(resourceName));
                 })
-                .setHandler(context.succeeding())
+                .onComplete(context.succeeding())
                 .compose(rrCreated -> {
                     T updated = getResourceWithModifications(rrCreated.resource());
                     T newStatus = getResourceWithNewReadyStatus(rrCreated.resource());
 
                     log.info("Updating resource (mocking an update due to some other reason)");
-                    op.operation().inNamespace(namespace).withName(RESOURCE_NAME).patch(updated);
+                    op.operation().inNamespace(namespace).withName(resourceName).patch(updated);
 
                     log.info("Updating resource status after underlying resource has changed");
                     return op.updateStatusAsync(newStatus);
                 })
-                .setHandler(context.failing(e -> context.verify(() -> {
+                .onComplete(context.failing(e -> context.verify(() -> {
                     assertThat("Exception was not KubernetesClientException, it was : " + e.toString(),
                             e, instanceOf(KubernetesClientException.class));
                     updateFailed.complete();
@@ -238,9 +240,13 @@ public abstract class AbstractCustomResourceOperatorIT<C extends KubernetesClien
 
         updateFailed.future().compose(v -> {
             log.info("Deleting resource");
-            return op.reconcile(namespace, RESOURCE_NAME, null);
+            return op.reconcile(namespace, resourceName, null);
         })
-        .setHandler(context.succeeding(v -> async.flag()));
+        .onComplete(context.succeeding(v -> async.flag()));
+    }
+
+    protected String getResourceName(String name) {
+        return name + "-" + new Random().nextInt(Integer.MAX_VALUE);
     }
 }
 

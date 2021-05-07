@@ -5,13 +5,13 @@
 package io.strimzi.operator.cluster.operator.assembly;
 
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
-import io.fabric8.kubernetes.api.model.apiextensions.CustomResourceDefinition;
+import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinition;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.strimzi.api.kafka.Crds;
 import io.strimzi.api.kafka.KafkaList;
-import io.strimzi.api.kafka.model.DoneableKafka;
 import io.strimzi.api.kafka.model.Kafka;
 import io.strimzi.api.kafka.model.KafkaBuilder;
+import io.strimzi.api.kafka.model.listener.arraylistener.KafkaListenerType;
 import io.strimzi.api.kafka.model.storage.JbodStorage;
 import io.strimzi.api.kafka.model.storage.JbodStorageBuilder;
 import io.strimzi.api.kafka.model.storage.PersistentClaimStorage;
@@ -31,6 +31,7 @@ import io.strimzi.operator.common.PasswordGenerator;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.MockCertManager;
+import io.strimzi.test.annotations.ParallelTest;
 import io.strimzi.test.mockkube.MockKube;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.Checkpoint;
@@ -40,17 +41,14 @@ import org.hamcrest.Matchers;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import static java.util.Collections.emptyMap;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 
@@ -59,13 +57,7 @@ public class JbodStorageTest {
 
     private static final String NAMESPACE = "test-jbod-storage";
     private static final String NAME = "my-kafka";
-    private static final KafkaVersion.Lookup VERSIONS = new KafkaVersion.Lookup(
-            new StringReader(KafkaVersionTestUtils.getKafkaVersionYaml()),
-            KafkaVersionTestUtils.getKafkaImageMap(),
-            emptyMap(),
-            emptyMap(),
-            emptyMap(), 
-            emptyMap()) { };
+    private static final KafkaVersion.Lookup VERSIONS = KafkaVersionTestUtils.getKafkaVersionLookup();
 
     private static Vertx vertx;
     private Kafka kafka;
@@ -105,6 +97,14 @@ public class JbodStorageTest {
                 .withNewSpec()
                     .withNewKafka()
                         .withReplicas(3)
+                        .withNewListeners()
+                            .addNewGenericKafkaListener()
+                                .withName("plain")
+                                .withPort(9092)
+                                .withType(KafkaListenerType.INTERNAL)
+                                .withTls(false)
+                            .endGenericKafkaListener()
+                        .endListeners()
                         .withNewJbodStorage()
                             .withVolumes(volumes)
                         .endJbodStorage()
@@ -120,14 +120,14 @@ public class JbodStorageTest {
 
         // setting up a mock Kubernetes client
         this.mockClient = new MockKube()
-                .withCustomResourceDefinition(kafkaAssemblyCrd, Kafka.class, KafkaList.class, DoneableKafka.class)
+                .withCustomResourceDefinition(kafkaAssemblyCrd, Kafka.class, KafkaList.class)
                 .end()
                 .build();
 
         // initialize a Kafka in MockKube
         Crds.kafkaOperation(this.mockClient).inNamespace(NAMESPACE).withName(NAME).create(this.kafka);
 
-        PlatformFeaturesAvailability pfa = new PlatformFeaturesAvailability(false, KubernetesVersion.V1_9);
+        PlatformFeaturesAvailability pfa = new PlatformFeaturesAvailability(false, KubernetesVersion.V1_16);
         // creating the Kafka operator
         ResourceOperatorSupplier ros =
                 new ResourceOperatorSupplier(this.vertx, this.mockClient,
@@ -140,11 +140,11 @@ public class JbodStorageTest {
                 ResourceUtils.dummyClusterOperatorConfig(VERSIONS, 2_000));
     }
 
-    @Test
+    @ParallelTest
     public void testJbodStorageCreatesPersistentVolumeClaimsMatchingKafkaVolumes(VertxTestContext context) {
         Checkpoint async = context.checkpoint();
         operator.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, NAMESPACE, NAME))
-            .setHandler(context.succeeding(v -> context.verify(() -> {
+            .onComplete(context.succeeding(v -> context.verify(() -> {
                 List<PersistentVolumeClaim> pvcs = getPvcs(NAMESPACE, NAME);
 
                 for (int i = 0; i < this.kafka.getSpec().getKafka().getReplicas(); i++) {
@@ -163,7 +163,7 @@ public class JbodStorageTest {
                             boolean isDeleteClaim = ((PersistentClaimStorage) volume).isDeleteClaim();
                             assertThat("deleteClaim value did not match for volume : " + volume.toString(),
                                     Annotations.booleanAnnotation(pvc, AbstractModel.ANNO_STRIMZI_IO_DELETE_CLAIM,
-                                            false, AbstractModel.ANNO_CO_STRIMZI_IO_DELETE_CLAIM),
+                                            false),
                                     is(isDeleteClaim));
 
                         }
@@ -174,7 +174,7 @@ public class JbodStorageTest {
             })));
     }
 
-    @Test
+    @ParallelTest
     public void testReconcileWithNewVolumeAddedToJbodStorage(VertxTestContext context) {
         Checkpoint async = context.checkpoint();
 
@@ -197,7 +197,7 @@ public class JbodStorageTest {
 
         // reconcile for kafka cluster creation
         operator.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, NAMESPACE, NAME))
-            .setHandler(context.succeeding(v -> context.verify(() -> {
+            .onComplete(context.succeeding(v -> context.verify(() -> {
                 List<PersistentVolumeClaim> pvcs = getPvcs(NAMESPACE, NAME);
                 Set<String> pvcsNames = pvcs.stream().map(pvc -> pvc.getMetadata().getName()).collect(Collectors.toSet());
                 assertThat(pvcsNames, is(expectedPvcs));
@@ -207,7 +207,7 @@ public class JbodStorageTest {
                 // reconcile kafka cluster with new Jbod storage
                 return operator.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, NAMESPACE, NAME));
             })
-            .setHandler(context.succeeding(v -> context.verify(() -> {
+            .onComplete(context.succeeding(v -> context.verify(() -> {
                 List<PersistentVolumeClaim> pvcs = getPvcs(NAMESPACE, NAME);
                 Set<String> pvcsNames = pvcs.stream().map(pvc -> pvc.getMetadata().getName()).collect(Collectors.toSet());
                 assertThat(pvcsNames, is(expectedPvcsWithNewJbodStorageVolume));
@@ -217,7 +217,7 @@ public class JbodStorageTest {
 
     }
 
-    @Test
+    @ParallelTest
     public void testReconcileWithVolumeRemovedFromJbodStorage(VertxTestContext context) {
         Checkpoint async = context.checkpoint();
 
@@ -237,7 +237,7 @@ public class JbodStorageTest {
 
         // reconcile for kafka cluster creation
         operator.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, NAMESPACE, NAME))
-            .setHandler(context.succeeding(v -> context.verify(() -> {
+            .onComplete(context.succeeding(v -> context.verify(() -> {
                 List<PersistentVolumeClaim> pvcs = getPvcs(NAMESPACE, NAME);
                 Set<String> pvcsNames = pvcs.stream().map(pvc -> pvc.getMetadata().getName()).collect(Collectors.toSet());
                 assertThat(pvcsNames, is(expectedPvcs));
@@ -247,7 +247,7 @@ public class JbodStorageTest {
                 // reconcile kafka cluster with a Jbod storage volume removed
                 return operator.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, NAMESPACE, NAME));
             })
-            .setHandler(context.succeeding(v -> context.verify(() -> {
+            .onComplete(context.succeeding(v -> context.verify(() -> {
                 List<PersistentVolumeClaim> pvcs = getPvcs(NAMESPACE, NAME);
                 Set<String> pvcsNames = pvcs.stream().map(pvc -> pvc.getMetadata().getName()).collect(Collectors.toSet());
                 assertThat(pvcsNames, is(expectedPvcsWithRemovedJbodStorageVolume));
@@ -255,7 +255,7 @@ public class JbodStorageTest {
             })));
     }
 
-    @Test
+    @ParallelTest
     public void testReconcileWithUpdateVolumeIdJbod(VertxTestContext context) {
         Checkpoint async = context.checkpoint();
 
@@ -276,7 +276,7 @@ public class JbodStorageTest {
 
         // reconcile for kafka cluster creation
         operator.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, NAMESPACE, NAME))
-            .setHandler(context.succeeding(v -> context.verify(() -> {
+            .onComplete(context.succeeding(v -> context.verify(() -> {
                 List<PersistentVolumeClaim> pvcs = getPvcs(NAMESPACE, NAME);
                 Set<String> pvcsNames = pvcs.stream().map(pvc -> pvc.getMetadata().getName()).collect(Collectors.toSet());
                 assertThat(pvcsNames, is(expectedPvcs));
@@ -286,7 +286,7 @@ public class JbodStorageTest {
                 // reconcile kafka cluster with a Jbod storage volume removed
                 return operator.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, NAMESPACE, NAME));
             })
-            .setHandler(context.succeeding(v -> context.verify(() -> {
+            .onComplete(context.succeeding(v -> context.verify(() -> {
                 List<PersistentVolumeClaim> pvcs = getPvcs(NAMESPACE, NAME);
                 Set<String> pvcsNames = pvcs.stream().map(pvc -> pvc.getMetadata().getName()).collect(Collectors.toSet());
                 assertThat(pvcsNames, is(expectedPvcsWithUpdatedJbodStorageVolume));

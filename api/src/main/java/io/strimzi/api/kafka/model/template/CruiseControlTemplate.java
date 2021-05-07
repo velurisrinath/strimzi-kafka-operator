@@ -6,6 +6,7 @@ package io.strimzi.api.kafka.model.template;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import io.strimzi.api.kafka.model.Constants;
 import io.strimzi.api.kafka.model.UnknownPropertyPreserving;
 import io.strimzi.crdgenerator.annotations.Description;
 import io.sundr.builder.annotations.Buildable;
@@ -21,7 +22,7 @@ import java.util.Map;
 @Buildable(
         editableEnabled = false,
         generateBuilderPackage = false,
-        builderPackage = "io.fabric8.kubernetes.api.builder"
+        builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonPropertyOrder({
@@ -32,7 +33,7 @@ public class CruiseControlTemplate implements Serializable, UnknownPropertyPrese
 
     private ResourceTemplate deployment;
     private PodTemplate pod;
-    private ResourceTemplate apiService;
+    private InternalServiceTemplate apiService;
     private PodDisruptionBudgetTemplate podDisruptionBudget;
     private ContainerTemplate cruiseControlContainer;
     private ContainerTemplate tlsSidecarContainer;
@@ -60,11 +61,11 @@ public class CruiseControlTemplate implements Serializable, UnknownPropertyPrese
 
     @Description("Template for Cruise Control API `Service`.")
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
-    public ResourceTemplate getApiService() {
+    public InternalServiceTemplate getApiService() {
         return apiService;
     }
 
-    public void setApiService(ResourceTemplate apiService) {
+    public void setApiService(InternalServiceTemplate apiService) {
         this.apiService = apiService;
     }
 

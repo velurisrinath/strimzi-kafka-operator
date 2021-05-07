@@ -10,6 +10,21 @@ metadata:
     heritage: "{{ .Release.Service }}"
 spec:
   group: "crdgenerator.strimzi.io"
+  names:
+    kind: "Example"
+    listKind: "ExampleList"
+    singular: "example"
+    plural: "examples"
+    categories:
+    - "strimzi"
+  scope: "Namespaced"
+  additionalPrinterColumns:
+  - name: "Foo"
+    description: "The foo"
+    JSONPath: "..."
+    type: "integer"
+  conversion:
+    strategy: "None"
   versions:
   - name: "v1alpha1"
     served: true
@@ -18,19 +33,6 @@ spec:
     served: true
     storage: false
   version: "v1alpha1"
-  scope: "Namespaced"
-  names:
-    kind: "Example"
-    listKind: "ExampleList"
-    singular: "example"
-    plural: "examples"
-    categories:
-    - "strimzi"
-  additionalPrinterColumns:
-  - name: "Foo"
-    description: "The foo"
-    JSONPath: "..."
-    type: "integer"
   validation:
     openAPIV3Schema:
       properties:
@@ -242,6 +244,12 @@ spec:
                           type: "string"
                       topologyKey:
                         type: "string"
+        alternatives:
+          oneOf:
+          - type: "array"
+            items:
+              type: "string"
+          - type: "object"
         arrayOfBoundTypeVar:
           type: "array"
           items:
@@ -272,6 +280,7 @@ spec:
             properties: {}
         arrayProperty:
           type: "array"
+          minItems: 1
           items:
             type: "string"
         arrayProperty2:
@@ -294,7 +303,6 @@ spec:
           type: "integer"
           example: "42"
           minimum: 42
-          deprecated: true
           description: "An example int property."
         listOfArray:
           type: "array"
@@ -312,6 +320,13 @@ spec:
           items:
             type: "object"
             properties: {}
+        listOfCustomizedEnum:
+          type: "array"
+          items:
+            type: "string"
+            enum:
+            - "one"
+            - "two"
         listOfInts:
           type: "array"
           items:
@@ -326,6 +341,13 @@ spec:
           type: "array"
           items:
             type: "object"
+        listOfNormalEnum:
+          type: "array"
+          items:
+            type: "string"
+            enum:
+            - "FOO"
+            - "BAR"
         listOfObjects:
           type: "array"
           items:
@@ -430,9 +452,25 @@ spec:
           items:
             type: "object"
             properties: {}
+        spec:
+          type: "object"
+          properties: {}
+        status:
+          type: "object"
+          properties: {}
         stringProperty:
           type: "string"
           pattern: ".*"
+        typedAlternatives:
+          oneOf:
+          - type: "object"
+            properties:
+              key2:
+                type: "string"
+          - type: "object"
+            properties:
+              key1:
+                type: "string"
       oneOf:
       - properties:
           either: {}

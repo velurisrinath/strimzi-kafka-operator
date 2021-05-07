@@ -22,8 +22,8 @@ import java.util.Map;
         editableEnabled = false,
         builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
-@JsonInclude(JsonInclude.Include.NON_NULL)
-@JsonPropertyOrder({ "generateCertificateAuthority", "validityDays", "renewalDays" })
+@JsonInclude(JsonInclude.Include.NON_DEFAULT)
+@JsonPropertyOrder({ "generateCertificateAuthority", "generateSecretOwnerReference", "validityDays", "renewalDays" })
 @EqualsAndHashCode
 public class CertificateAuthority implements UnknownPropertyPreserving, Serializable {
 
@@ -31,6 +31,7 @@ public class CertificateAuthority implements UnknownPropertyPreserving, Serializ
 
     private int validityDays;
     private boolean generateCertificateAuthority = true;
+    private boolean generateSecretOwnerReference = true;
     private int renewalDays;
     private Map<String, Object> additionalProperties = new HashMap<>(0);
     private CertificateExpirationPolicy certificateExpirationPolicy;
@@ -39,6 +40,7 @@ public class CertificateAuthority implements UnknownPropertyPreserving, Serializ
 
     @Description("The number of days generated certificates should be valid for. The default is 365.")
     @Minimum(1)
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
     public int getValidityDays() {
         return validityDays;
     }
@@ -50,6 +52,7 @@ public class CertificateAuthority implements UnknownPropertyPreserving, Serializ
     @Description("If true then Certificate Authority certificates will be generated automatically. " +
             "Otherwise the user will need to provide a Secret with the CA certificate. " +
             "Default is true.")
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
     public boolean isGenerateCertificateAuthority() {
         return generateCertificateAuthority;
     }
@@ -58,12 +61,27 @@ public class CertificateAuthority implements UnknownPropertyPreserving, Serializ
         this.generateCertificateAuthority = generateCertificateAuthority;
     }
 
+    @Description("If `true`, the Cluster and Client CA Secrets are configured with the `ownerReference` set to the `Kafka` resource. " +
+            "If the `Kafka` resource is deleted when `true`, the CA Secrets are also deleted. " +
+            "If `false`, the `ownerReference` is disabled. " +
+            "If the `Kafka` resource is deleted when `false`, the CA Secrets are retained and available for reuse. " +
+            "Default is `true`.")
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
+    public boolean isGenerateSecretOwnerReference() {
+        return generateSecretOwnerReference;
+    }
+
+    public void setGenerateSecretOwnerReference(boolean generateSecretOwnerReference) {
+        this.generateSecretOwnerReference = generateSecretOwnerReference;
+    }
+
     @Description("The number of days in the certificate renewal period. " +
             "This is the number of days before the a certificate expires during which renewal actions may be performed. " +
             "When `generateCertificateAuthority` is true, this will cause the generation of a new certificate. " +
             "When `generateCertificateAuthority` is true, this will cause extra logging at WARN level about the pending certificate expiry. " +
             "Default is 30.")
     @Minimum(1)
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
     public int getRenewalDays() {
         return renewalDays;
     }

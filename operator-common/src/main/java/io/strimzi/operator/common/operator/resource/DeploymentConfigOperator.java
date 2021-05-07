@@ -8,7 +8,6 @@ import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.openshift.api.model.DeploymentCondition;
 import io.fabric8.openshift.api.model.DeploymentConfig;
 import io.fabric8.openshift.api.model.DeploymentConfigList;
-import io.fabric8.openshift.api.model.DoneableDeploymentConfig;
 import io.fabric8.openshift.client.OpenShiftClient;
 import io.fabric8.openshift.client.dsl.DeployableScalableResource;
 import io.vertx.core.Future;
@@ -17,7 +16,8 @@ import io.vertx.core.Vertx;
 /**
  * Operations for {@code DeploymentConfigs}s.
  */
-public class DeploymentConfigOperator extends AbstractScalableResourceOperator<OpenShiftClient, DeploymentConfig, DeploymentConfigList, DoneableDeploymentConfig, DeployableScalableResource<DeploymentConfig, DoneableDeploymentConfig>> {
+public class DeploymentConfigOperator extends AbstractScalableResourceOperator<OpenShiftClient, DeploymentConfig,
+        DeploymentConfigList, DeployableScalableResource<DeploymentConfig>> {
     /**
      * Constructor
      * @param vertx The Vertx instance
@@ -28,7 +28,7 @@ public class DeploymentConfigOperator extends AbstractScalableResourceOperator<O
     }
 
     @Override
-    protected MixedOperation<DeploymentConfig, DeploymentConfigList, DoneableDeploymentConfig, DeployableScalableResource<DeploymentConfig, DoneableDeploymentConfig>> operation() {
+    protected MixedOperation<DeploymentConfig, DeploymentConfigList, DeployableScalableResource<DeploymentConfig>> operation() {
         return client.deploymentConfigs();
     }
 
@@ -102,6 +102,26 @@ public class DeploymentConfigOperator extends AbstractScalableResourceOperator<O
             return dep.getStatus().getConditions().stream().filter(condition -> "Progressing".equals(condition.getType())).findFirst().orElse(null);
         } else {
             return null;
+        }
+    }
+
+    /**
+     * Due to the separation of Fabric8 Kubernetes and OpenShift clients, the DeploymentConfig needs its own isReady()
+     * method instead of using isReady() from AbstractReadyResourceOperator because it would not pass Readiness.isReadinessApplicable()
+     *
+     * @param namespace The namespace.
+     * @param name The resource name.
+     * @return Whether the resource is in the Ready state.
+     */
+    @Override
+    public boolean isReady(String namespace, String name) {
+        DeployableScalableResource<DeploymentConfig> resourceOp = operation().inNamespace(namespace).withName(name);
+        DeploymentConfig resource = resourceOp.get();
+        
+        if (resource != null)   {
+            return Boolean.TRUE.equals(resourceOp.isReady());
+        } else {
+            return false;
         }
     }
 }

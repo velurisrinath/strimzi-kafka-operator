@@ -18,6 +18,7 @@ class Quantities {
     public static long parseMemory(String memory) {
         boolean seenDot = false;
         boolean seenE = false;
+        boolean seenm = false;
         long factor = 1L;
         int end = memory.length();
         for (int i = 0; i < memory.length(); i++) {
@@ -26,6 +27,10 @@ class Quantities {
                 seenE = true;
             } else if (ch == '.') {
                 seenDot = true;
+            } else if (ch == 'm') {
+                seenm = true;
+                end = i;
+                break;
             } else if (ch < '0' || '9' < ch) {
                 end = i;
                 factor = memoryFactor(memory.substring(i));
@@ -36,6 +41,8 @@ class Quantities {
         String numberPart = memory.substring(0, end);
         if (seenDot || seenE) {
             result = (long) (Double.parseDouble(numberPart) * factor);
+        } else if (seenm)   {
+            result = (long) Math.floor(Double.parseDouble(numberPart) / 1000);
         } else {
             result = Long.parseLong(numberPart) * factor;
         }
@@ -97,23 +104,16 @@ class Quantities {
      * @return The equivalent number of "millicpus".
      */
     public static int parseCpuAsMilliCpus(String cpu) {
-        int suffixIndex = cpu.length();
-        int factor = 1000;
-        for (int i = 0; i < cpu.length(); i++) {
-            char ch = cpu.charAt(i);
-            if (ch < '0' || '9' < ch) {
-                suffixIndex = i;
-                if ("m".equals(cpu.substring(i))) {
-                    factor = 1;
-                    break;
-                } else if (cpu.substring(i).startsWith(".")) {
-                    return (int) (Double.parseDouble(cpu) * 1000L);
-                } else {
-                    throw new IllegalArgumentException("Failed to parse CPU quantity \"" + cpu + "\"");
-                }
+        int suffixIndex = cpu.length() - 1;
+        try {
+            if ("m".equals(cpu.substring(suffixIndex))) {
+                return Integer.parseInt(cpu.substring(0, suffixIndex));
+            } else {
+                return (int) (Double.parseDouble(cpu) * 1000L);
             }
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Failed to parse CPU quantity \"" + cpu + "\"");
         }
-        return factor * Integer.parseInt(cpu.substring(0, suffixIndex));
     }
 
     public static String formatMilliCpu(int milliCpu) {

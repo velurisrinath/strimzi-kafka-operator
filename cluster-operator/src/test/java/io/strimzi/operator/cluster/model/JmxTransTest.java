@@ -5,13 +5,19 @@
 package io.strimzi.operator.cluster.model;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import io.fabric8.kubernetes.api.model.Affinity;
+import io.fabric8.kubernetes.api.model.AffinityBuilder;
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.EnvVar;
+import io.fabric8.kubernetes.api.model.NodeSelectorTermBuilder;
 import io.fabric8.kubernetes.api.model.SecurityContext;
 import io.fabric8.kubernetes.api.model.SecurityContextBuilder;
+import io.fabric8.kubernetes.api.model.Toleration;
+import io.fabric8.kubernetes.api.model.TolerationBuilder;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.strimzi.api.kafka.model.ContainerEnvVar;
 import io.strimzi.api.kafka.model.InlineLogging;
+import io.strimzi.api.kafka.model.JmxPrometheusExporterMetrics;
 import io.strimzi.api.kafka.model.JmxTransSpec;
 import io.strimzi.api.kafka.model.JmxTransSpecBuilder;
 import io.strimzi.api.kafka.model.Kafka;
@@ -28,8 +34,9 @@ import io.strimzi.operator.cluster.model.components.JmxTransQueries;
 import io.strimzi.operator.cluster.model.components.JmxTransServer;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.test.TestUtils;
+import io.strimzi.test.annotations.ParallelSuite;
+import io.strimzi.test.annotations.ParallelTest;
 import io.vertx.core.json.JsonObject;
-import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -38,6 +45,7 @@ import java.util.List;
 import java.util.Map;
 
 import static io.strimzi.operator.cluster.CustomMatchers.hasEntries;
+import static java.util.Collections.singletonList;
 import static java.util.Collections.singletonMap;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.hasItem;
@@ -46,6 +54,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.hasProperty;
 
+@ParallelSuite
 public class JmxTransTest {
     private static final KafkaVersion.Lookup VERSIONS = KafkaVersionTestUtils.getKafkaVersionLookup();
     private final String namespace = "test";
@@ -55,6 +64,9 @@ public class JmxTransTest {
     private final int healthDelay = 120;
     private final int healthTimeout = 30;
     private final Map<String, Object> metricsCm = singletonMap("animal", "wombat");
+    private final String metricsCmJson = "{\"animal\":\"wombat\"}";
+    private final String metricsCMName = "metrics-cm";
+    private final JmxPrometheusExporterMetrics jmxMetricsConfig = io.strimzi.operator.cluster.TestUtils.getJmxPrometheusExporterMetrics(AbstractModel.ANCILLARY_CM_KEY_METRICS, metricsCMName);
     private final Map<String, Object> configuration = singletonMap("foo", "bar");
     private final InlineLogging kafkaLog = new InlineLogging();
     private final InlineLogging zooLog = new InlineLogging();
@@ -71,7 +83,7 @@ public class JmxTransTest {
                     .build())
             .build();
 
-    private final Kafka kafkaAssembly = new KafkaBuilder(ResourceUtils.createKafkaCluster(namespace, cluster, replicas, image, healthDelay, healthTimeout, metricsCm, configuration, kafkaLog, zooLog))
+    private final Kafka kafkaAssembly = new KafkaBuilder(ResourceUtils.createKafka(namespace, cluster, replicas, image, healthDelay, healthTimeout, metricsCm, jmxMetricsConfig, configuration, kafkaLog, zooLog))
             .editSpec()
                 .withJmxTrans(jmxTransSpec)
                 .editKafka().withJmxOptions(new KafkaJmxOptionsBuilder()
@@ -83,7 +95,7 @@ public class JmxTransTest {
 
     private final JmxTrans jmxTrans = JmxTrans.fromCrd(kafkaAssembly, VERSIONS);
 
-    @Test
+    @ParallelTest
     public void testOutputDefinitionWriterDeserialization() {
         JmxTransOutputWriter outputWriter = new JmxTransOutputWriter();
 
@@ -104,7 +116,7 @@ public class JmxTransTest {
 
     }
 
-    @Test
+    @ParallelTest
     public void testServersDeserialization() {
         JmxTransServer server = new JmxTransServer();
 
@@ -123,7 +135,7 @@ public class JmxTransTest {
         assertThat(targetJson.getJsonArray("queries").getList().size(), is(0));
     }
 
-    @Test
+    @ParallelTest
     public void testQueriesDeserialization() {
         JmxTransOutputWriter outputWriter = new JmxTransOutputWriter();
 
@@ -155,7 +167,7 @@ public class JmxTransTest {
         assertThat(outputWriterJson.getJsonArray("typeNames").getList().get(0), is("SingleType"));
     }
 
-    @Test
+    @ParallelTest
     public void testConfigMapOnScaleUp() throws JsonProcessingException  {
         ConfigMap originalCM = jmxTrans.generateJmxTransConfigMap(jmxTransSpec, 1);
         ConfigMap scaledCM = jmxTrans.generateJmxTransConfigMap(jmxTransSpec, 2);
@@ -165,7 +177,7 @@ public class JmxTransTest {
                 is(true));
     }
 
-    @Test
+    @ParallelTest
     public void testConfigMapOnScaleDown() throws JsonProcessingException  {
         ConfigMap originalCM = jmxTrans.generateJmxTransConfigMap(jmxTransSpec, 2);
         ConfigMap scaledCM = jmxTrans.generateJmxTransConfigMap(jmxTransSpec, 1);
@@ -175,7 +187,7 @@ public class JmxTransTest {
                 is(true));
     }
 
-    @Test
+    @ParallelTest
     public void testTemplate() {
         Map<String, String> depLabels = TestUtils.map("l1", "v1", "l2", "v2",
                 Labels.KUBERNETES_PART_OF_LABEL, "custom-part",
@@ -187,6 +199,27 @@ public class JmxTransTest {
 
         Map<String, String> podLabels = TestUtils.map("l3", "v3", "l4", "v4");
         Map<String, String> podAnots = TestUtils.map("a3", "v3", "a4", "v4");
+
+        Affinity affinity = new AffinityBuilder()
+                .withNewNodeAffinity()
+                    .withNewRequiredDuringSchedulingIgnoredDuringExecution()
+                        .withNodeSelectorTerms(new NodeSelectorTermBuilder()
+                                .addNewMatchExpression()
+                                    .withNewKey("key1")
+                                    .withNewOperator("In")
+                                    .withValues("value1", "value2")
+                                .endMatchExpression()
+                                .build())
+                        .endRequiredDuringSchedulingIgnoredDuringExecution()
+                .endNodeAffinity()
+                .build();
+
+        List<Toleration> tolerations = singletonList(new TolerationBuilder()
+                .withEffect("NoExecute")
+                .withKey("key1")
+                .withOperator("Equal")
+                .withValue("value1")
+                .build());
 
         Kafka resource = new KafkaBuilder(kafkaAssembly)
                 .editSpec()
@@ -205,6 +238,9 @@ public class JmxTransTest {
                                 .endMetadata()
                                 .withNewPriorityClassName("top-priority")
                                 .withNewSchedulerName("my-scheduler")
+                                .withAffinity(affinity)
+                                .withTolerations(tolerations)
+                                .withEnableServiceLinks(false)
                             .endPod()
                         .endTemplate()
                     .endJmxTrans()
@@ -217,14 +253,17 @@ public class JmxTransTest {
         assertThat(dep.getMetadata().getLabels(), hasEntries(expectedDepLabels));
         assertThat(dep.getMetadata().getAnnotations(), hasEntries(depAnots));
         assertThat(dep.getSpec().getTemplate().getSpec().getPriorityClassName(), is("top-priority"));
+        assertThat(dep.getSpec().getTemplate().getSpec().getAffinity(), is(affinity));
+        assertThat(dep.getSpec().getTemplate().getSpec().getTolerations(), is(tolerations));
 
         // Check Pods
         assertThat(dep.getSpec().getTemplate().getMetadata().getLabels(), hasEntries(podLabels));
         assertThat(dep.getSpec().getTemplate().getMetadata().getAnnotations(), hasEntries(podAnots));
         assertThat(dep.getSpec().getTemplate().getSpec().getSchedulerName(), is("my-scheduler"));
+        assertThat(dep.getSpec().getTemplate().getSpec().getEnableServiceLinks(), is(false));
     }
 
-    @Test
+    @ParallelTest
     public void testContainerEnvVars() {
 
         ContainerEnvVar envVar1 = new ContainerEnvVar();
@@ -267,7 +306,7 @@ public class JmxTransTest {
                         .map(EnvVar::getValue).findFirst().orElse("").equals(testEnvTwoValue), is(true));
     }
 
-    @Test
+    @ParallelTest
     public void testContainerEnvVarsConflict() {
         ContainerEnvVar envVar1 = new ContainerEnvVar();
         String testEnvOneKey = JmxTrans.ENV_VAR_JMXTRANS_LOGGING_LEVEL;
@@ -299,7 +338,7 @@ public class JmxTransTest {
                         .map(EnvVar::getValue).findFirst().orElse("").equals(testEnvOneValue), is(false));
     }
 
-    @Test
+    @ParallelTest
     public void testContainerSecurityContext() {
 
         SecurityContext securityContext = new SecurityContextBuilder()

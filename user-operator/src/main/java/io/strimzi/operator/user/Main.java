@@ -10,7 +10,6 @@ import io.fabric8.kubernetes.client.DefaultKubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.strimzi.api.kafka.Crds;
 import io.strimzi.api.kafka.KafkaUserList;
-import io.strimzi.api.kafka.model.DoneableKafkaUser;
 import io.strimzi.api.kafka.model.KafkaUser;
 import io.strimzi.certs.OpenSslCertManager;
 import io.strimzi.operator.common.AdminClientProvider;
@@ -57,12 +56,14 @@ public class Main {
         VertxOptions options = new VertxOptions().setMetricsOptions(
                 new MicrometerMetricsOptions()
                         .setPrometheusOptions(new VertxPrometheusOptions().setEnabled(true))
+                        .setJvmMetricsEnabled(true)
                         .setEnabled(true));
         Vertx vertx = Vertx.vertx(options);
+
         KubernetesClient client = new DefaultKubernetesClient();
         AdminClientProvider adminClientProvider = new DefaultAdminClientProvider();
 
-        run(vertx, client, adminClientProvider, config).setHandler(ar -> {
+        run(vertx, client, adminClientProvider, config).onComplete(ar -> {
             if (ar.failed()) {
                 log.error("Unable to start operator", ar.cause());
                 System.exit(1);
@@ -77,18 +78,19 @@ public class Main {
 
         OpenSslCertManager certManager = new OpenSslCertManager();
         SecretOperator secretOperations = new SecretOperator(vertx, client);
-        CrdOperator<KubernetesClient, KafkaUser, KafkaUserList, DoneableKafkaUser> crdOperations = new CrdOperator<>(vertx, client, KafkaUser.class, KafkaUserList.class, DoneableKafkaUser.class, Crds.kafkaUser());
+        CrdOperator<KubernetesClient, KafkaUser, KafkaUserList> crdOperations = new CrdOperator<>(vertx, client, KafkaUser.class, KafkaUserList.class, KafkaUser.RESOURCE_KIND);
         return createAdminClient(adminClientProvider, config, secretOperations)
                 .compose(adminClient -> {
                     SimpleAclOperator aclOperations = new SimpleAclOperator(vertx, adminClient);
                     ScramShaCredentials scramShaCredentials = new ScramShaCredentials(config.getZookeperConnect(), (int) config.getZookeeperSessionTimeoutMs());
                     ScramShaCredentialsOperator scramShaCredentialsOperator = new ScramShaCredentialsOperator(vertx, scramShaCredentials);
-                    KafkaUserQuotasOperator quotasOperator = new KafkaUserQuotasOperator(vertx, config.getZookeperConnect(), (int) config.getZookeeperSessionTimeoutMs());
+                    KafkaUserQuotasOperator quotasOperator = new KafkaUserQuotasOperator(vertx, adminClient);
 
                     KafkaUserOperator kafkaUserOperations = new KafkaUserOperator(vertx,
                             certManager, crdOperations,
                             config.getLabels(),
-                            secretOperations, scramShaCredentialsOperator, quotasOperator, aclOperations, config.getCaCertSecretName(), config.getCaKeySecretName(), config.getCaNamespace());
+                            secretOperations, scramShaCredentialsOperator, quotasOperator, aclOperations, config.getCaCertSecretName(), config.getCaKeySecretName(), config.getCaNamespace(),
+                            config.getSecretPrefix());
 
                     Promise<String> promise = Promise.promise();
                     UserOperator operator = new UserOperator(config.getNamespace(),

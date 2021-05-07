@@ -5,7 +5,7 @@ source $(dirname $(realpath $0))/../tools/kafka-versions-tools.sh
 # Generates documentation/book/snip-images.adoc
 # according to the values in kafka-versions
 
-. $(dirname $0)/../multi-platform-support.sh
+. $(dirname $0)/../tools/multi-platform-support.sh
 
 # Parse the Kafka versions file and get a list of version strings in an array
 # called "versions"
@@ -28,7 +28,7 @@ done
 cat <<EOF
 
 a|
-{ProductName} image for running Kafka, including:
+Strimzi image for running Kafka, including:
 
 * Kafka Broker
 * Kafka Connect / S2I
@@ -41,7 +41,7 @@ a|
 * {DockerOrg}/operator:{DockerTag}
 
 a|
-{ProductName} image for running the operators:
+Strimzi image for running the operators:
 
 * Cluster Operator
 * Topic Operator
@@ -53,14 +53,14 @@ a|
 * {DockerOrg}/kafka-bridge:{BridgeDockerTag}
 
 a|
-{ProductName} image for running the {ProductName} kafka Bridge
+Strimzi image for running the Strimzi kafka Bridge
 
 |JmxTrans
 a|
 * {DockerOrg}/jmxtrans:{DockerTag}
 
 a|
-{ProductName} image for running the {ProductName} JmxTrans
+Strimzi image for running the Strimzi JmxTrans
 
 |===
 EOF

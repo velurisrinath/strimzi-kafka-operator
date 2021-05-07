@@ -7,6 +7,7 @@ package io.strimzi.api.kafka.model;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.strimzi.crdgenerator.annotations.Description;
+import io.strimzi.crdgenerator.annotations.DescriptionFile;
 import io.sundr.builder.annotations.Buildable;
 import io.vertx.core.cli.annotations.DefaultValue;
 import lombok.EqualsAndHashCode;
@@ -16,13 +17,14 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * A representation of a single ACL rule for SimpleAclAuthorizer
+ * A representation of a single ACL rule for AclAuthorizer
  */
+@DescriptionFile
 @Buildable(
         editableEnabled = false,
         builderPackage = Constants.FABRIC8_KUBERNETES_API
 )
-@JsonInclude(JsonInclude.Include.NON_NULL)
+@JsonInclude(JsonInclude.Include.NON_DEFAULT)
 @EqualsAndHashCode
 public class AclRule implements UnknownPropertyPreserving, Serializable {
 
@@ -49,7 +51,7 @@ public class AclRule implements UnknownPropertyPreserving, Serializable {
             "ACL rules with type `allow` are used to allow user to execute the specified operations. " +
             "Default value is `allow`.")
     @DefaultValue("allow")
-    @JsonInclude(value = JsonInclude.Include.NON_NULL)
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
     public AclRuleType getType() {
         return type;
     }
@@ -70,7 +72,7 @@ public class AclRule implements UnknownPropertyPreserving, Serializable {
 
     @Description("The host from which the action described in the ACL rule is allowed or denied.")
     @DefaultValue("*")
-    @JsonInclude(value = JsonInclude.Include.NON_NULL)
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
     public String getHost() {
         return host;
     }

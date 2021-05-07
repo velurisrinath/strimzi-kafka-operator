@@ -40,6 +40,7 @@ public class Exec {
     private static final Pattern ERROR_PATTERN = Pattern.compile("Error from server \\(([a-zA-Z0-9]+)\\):");
     private static final Pattern INVALID_PATTERN = Pattern.compile("The ([a-zA-Z0-9]+) \"([a-z0-9.-]+)\" is invalid:");
     private static final Pattern PATH_SPLITTER = Pattern.compile(System.getProperty("path.separator"));
+    private static final int MAXIMUM_EXEC_LOG_CHARACTER_SIZE = Integer.parseInt(System.getenv().getOrDefault("STRIMZI_EXEC_MAX_LOG_OUTPUT_CHARACTERS", "20000"));
     private static final Object LOCK = new Object();
 
     public Process process;
@@ -162,17 +163,21 @@ public class Exec {
             Exec executor = new Exec();
             ret = executor.execute(input, command, timeout);
             synchronized (LOCK) {
-                if (logToOutput) {
-                    LOGGER.info("Command: {}", String.join(" ", command));
+                if (logToOutput || ret != 0) {
+                    String log = ret != 0 ? "Failed to exec command" : "Command";
+                    LOGGER.info("{}: {}", log, String.join(" ", command));
+                    if (input != null && !input.contains("CustomResourceDefinition")) {
+                        LOGGER.info("Input: {}", input.trim());
+                    }
                     LOGGER.info("RETURN code: {}", ret);
                     if (!executor.out().isEmpty()) {
                         LOGGER.info("======STDOUT START=======");
-                        LOGGER.info("{}", executor.out());
+                        LOGGER.info("{}", cutExecutorLog(executor.out().trim()));
                         LOGGER.info("======STDOUT END======");
                     }
                     if (!executor.err().isEmpty()) {
                         LOGGER.info("======STDERR START=======");
-                        LOGGER.info("{}", executor.err());
+                        LOGGER.info("{}", cutExecutorLog(executor.err().trim()));
                         LOGGER.info("======STDERR END======");
                     }
                 }
@@ -329,6 +334,19 @@ public class Exec {
             }
         }
         return false;
+    }
+
+    /**
+     * This method check the size of executor output log and cut it if it's too long.
+     * @param log executor log
+     * @return updated log if size is too big
+     */
+    public static String cutExecutorLog(String log) {
+        if (log.length() > MAXIMUM_EXEC_LOG_CHARACTER_SIZE) {
+            LOGGER.warn("Executor log is too long. Going to strip it and print only first {} characters", MAXIMUM_EXEC_LOG_CHARACTER_SIZE);
+            return log.substring(0, MAXIMUM_EXEC_LOG_CHARACTER_SIZE);
+        }
+        return log;
     }
 
     /**
