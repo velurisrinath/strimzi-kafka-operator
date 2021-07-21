@@ -1,9 +1,9 @@
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic
 metadata:
-  name: my-topic
+  name: skypower-test
   labels:
-    strimzi.io/cluster: my-cluster
+    strimzi.io/cluster: skyfri-development
 spec:
   partitions: 1
   replicas: 1
