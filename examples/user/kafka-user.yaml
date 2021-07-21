@@ -25,7 +25,7 @@ spec:
         host: "*"
       - resource:
           type: group
-          name: skypower-1
+          name: skypower-group-1
           patternType: literal
         operation: Read
         host: "*"
