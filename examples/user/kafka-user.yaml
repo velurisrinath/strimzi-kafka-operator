@@ -3,7 +3,7 @@ kind: KafkaUser
 metadata:
   name: skypower-1
   labels:
-    strimzi.io/cluster: skyfri-develoment
+    strimzi.io/cluster: skyfri-development
 spec:
   authentication:
     type: tls
